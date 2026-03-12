@@ -1779,10 +1779,9 @@ export default function App() {
         const [col, row] = screenToTile(mx, my, ox, oy)
         const clampedCol = Math.max(0, Math.min(MAP_COLS - 1, col))
         const clampedRow = Math.max(0, Math.min(MAP_ROWS - 1, row))
-        // Mutate ref directly during drag to avoid 60 setState/sec browser crash
-        decorationsRef.current = decorationsRef.current.map(d =>
-          d._id === dragRef.current!.decoId ? { ...d, col: clampedCol, row: clampedRow } : d
-        )
+        // Mutate the existing object in-place — no allocations during drag
+        const target = decorationsRef.current.find(d => d._id === dragRef.current!.decoId)
+        if (target) { target.col = clampedCol; target.row = clampedRow }
         e.currentTarget.style.cursor = 'grabbing'
         return
       }
