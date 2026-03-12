@@ -1,0 +1,24 @@
+{
+  "frames": {
+    "lounge_carpet_64": {
+      "frame": {
+        "x": 0,
+        "y": 0,
+        "w": 64,
+        "h": 32
+      },
+      "sourceSize": {
+        "w": 64,
+        "h": 32
+      }
+    }
+  },
+  "meta": {
+    "image": "lounge_carpet_64.png",
+    "size": {
+      "w": 64,
+      "h": 32
+    },
+    "scale": 1
+  }
+}

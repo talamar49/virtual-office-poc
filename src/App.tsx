@@ -2267,6 +2267,13 @@ export default function App() {
               <code style={{ fontSize: 12, color: '#7B68EE' }}>agent:{selectedAgent.id}</code>
             </InfoBox>
           )}
+
+          {/* Chat Input — UI by Noa, logic by Alon */}
+          <ChatInput
+            agentId={selectedAgent.id}
+            agentColor={STATE_META[selectedAgent.state].color}
+            compact={isCompact}
+          />
         </div>
       )}
     </div>
@@ -2287,6 +2294,177 @@ function InfoBox({ label, children }: { label: string; children: React.ReactNode
     <div style={{ background: 'rgba(255,255,255,0.05)', borderRadius: 8, padding: 12, marginBottom: 10 }}>
       <div style={{ fontSize: 12, color: '#888', marginBottom: 4 }}>{label}</div>
       {children}
+    </div>
+  )
+}
+
+// ── Chat Input Component ──
+// UI-only — onSend callback for Alon to wire up
+
+type SendStatus = 'idle' | 'sending' | 'sent' | 'error'
+
+function ChatInput({ agentId, agentColor, compact, onSend }: {
+  agentId: string
+  agentColor: string
+  compact?: boolean
+  onSend?: (agentId: string, message: string) => Promise<void> | void
+}) {
+  const [text, setText] = useState('')
+  const [status, setStatus] = useState<SendStatus>('idle')
+  const inputRef = useRef<HTMLInputElement>(null)
+
+  const handleSend = useCallback(async () => {
+    const msg = text.trim()
+    if (!msg || status === 'sending') return
+
+    setStatus('sending')
+    try {
+      await onSend?.(agentId, msg)
+      setText('')
+      setStatus('sent')
+      // Reset to idle after success animation
+      setTimeout(() => setStatus('idle'), 1800)
+    } catch {
+      setStatus('error')
+      setTimeout(() => setStatus('idle'), 2000)
+    }
+  }, [text, status, agentId, onSend])
+
+  const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault()
+      handleSend()
+    }
+  }, [handleSend])
+
+  const inputHeight = compact ? 36 : 44
+  const fontSize = compact ? 13 : 14
+
+  return (
+    <div style={{
+      marginTop: 12,
+      borderTop: '1px solid rgba(255,255,255,0.08)',
+      paddingTop: 12,
+      direction: 'rtl',
+    }}>
+      {/* Success / Error animation overlay */}
+      {(status === 'sent' || status === 'error') && (
+        <div style={{
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          gap: 6,
+          padding: '8px 0',
+          fontSize: 13,
+          color: status === 'sent' ? '#4ade80' : '#f87171',
+          animation: 'chatFadeIn 0.3s ease-out',
+        }}>
+          <span style={{
+            width: 20, height: 20, borderRadius: '50%',
+            background: status === 'sent' ? 'rgba(74, 222, 128, 0.15)' : 'rgba(248, 113, 113, 0.15)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            fontSize: 12,
+          }}>
+            {status === 'sent' ? '✓' : '✕'}
+          </span>
+          {status === 'sent' ? 'נשלח!' : 'שגיאה בשליחה'}
+        </div>
+      )}
+
+      {/* Input row */}
+      <div style={{
+        display: 'flex',
+        gap: 8,
+        alignItems: 'center',
+      }}>
+        <input
+          ref={inputRef}
+          type="text"
+          value={text}
+          onChange={e => setText(e.target.value)}
+          onKeyDown={handleKeyDown}
+          placeholder="שלח הודעה..."
+          disabled={status === 'sending'}
+          style={{
+            flex: 1,
+            height: inputHeight,
+            minHeight: inputHeight, // touch target
+            padding: '0 12px',
+            borderRadius: 8,
+            border: '1px solid rgba(255,255,255,0.1)',
+            background: 'rgba(255,255,255,0.05)',
+            color: '#eee',
+            fontSize,
+            fontFamily: '"Segoe UI", Arial, sans-serif',
+            outline: 'none',
+            direction: 'rtl',
+            transition: 'border-color 0.2s, background 0.2s',
+            opacity: status === 'sending' ? 0.6 : 1,
+          }}
+          onFocus={e => {
+            e.currentTarget.style.borderColor = agentColor
+            e.currentTarget.style.background = 'rgba(255,255,255,0.08)'
+          }}
+          onBlur={e => {
+            e.currentTarget.style.borderColor = 'rgba(255,255,255,0.1)'
+            e.currentTarget.style.background = 'rgba(255,255,255,0.05)'
+          }}
+        />
+        <button
+          onClick={handleSend}
+          disabled={!text.trim() || status === 'sending'}
+          style={{
+            width: inputHeight,
+            height: inputHeight,
+            minWidth: inputHeight, // touch target
+            minHeight: inputHeight,
+            borderRadius: 8,
+            border: 'none',
+            background: text.trim() && status !== 'sending'
+              ? agentColor
+              : 'rgba(255,255,255,0.08)',
+            color: text.trim() && status !== 'sending' ? '#fff' : '#555',
+            fontSize: compact ? 16 : 18,
+            cursor: text.trim() && status !== 'sending' ? 'pointer' : 'default',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            transition: 'background 0.2s, transform 0.1s',
+            transform: status === 'sending' ? 'scale(0.95)' : 'scale(1)',
+            flexShrink: 0,
+          }}
+          onMouseDown={e => {
+            if (text.trim()) (e.currentTarget as HTMLElement).style.transform = 'scale(0.9)'
+          }}
+          onMouseUp={e => {
+            (e.currentTarget as HTMLElement).style.transform = 'scale(1)'
+          }}
+          title="שלח"
+        >
+          {status === 'sending' ? (
+            // Spinning indicator
+            <span style={{
+              display: 'inline-block',
+              width: 16, height: 16,
+              border: '2px solid rgba(255,255,255,0.3)',
+              borderTopColor: '#fff',
+              borderRadius: '50%',
+              animation: 'chatSpin 0.6s linear infinite',
+            }} />
+          ) : '←'}
+        </button>
+      </div>
+
+      {/* CSS animations (injected once) */}
+      <style>{`
+        @keyframes chatFadeIn {
+          from { opacity: 0; transform: translateY(4px); }
+          to { opacity: 1; transform: translateY(0); }
+        }
+        @keyframes chatSpin {
+          to { transform: rotate(360deg); }
+        }
+      `}</style>
     </div>
   )
 }
