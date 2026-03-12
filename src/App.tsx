@@ -1625,7 +1625,8 @@ export default function App() {
     }
 
     pollGateway()
-    const timer = setInterval(pollGateway, 5000)
+    // Fast polling (2s) — change detection inside prevents unnecessary re-renders
+    const timer = setInterval(pollGateway, 2000)
     return () => clearInterval(timer)
   }, [gatewayToken, gatewayUrl])
 
