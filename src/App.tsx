@@ -14,6 +14,7 @@ interface AgentDef {
   task: string
   cubicleIndex: number // permanent cubicle slot (0-11)
   lastUpdated?: number // timestamp ms
+  sessionKey?: string // full Gateway session key for messaging
 }
 
 interface AgentRuntime {
@@ -455,6 +456,7 @@ function agentDefFromSession(sessionKey: string, index: number, updatedAt: numbe
     task: lastMsg ?? '',
     cubicleIndex: index,
     lastUpdated: updatedAt,
+    sessionKey,
   }
 }
 
@@ -2004,6 +2006,33 @@ export default function App() {
     return () => window.removeEventListener('keydown', handler)
   }, [])
 
+  // Send message to agent via Gateway proxy
+  const handleSendToAgent = useCallback(async (agentId: string, message: string) => {
+    const agent = agentDefsRef.current.find(a => a.id === agentId)
+    const sessionKey = agent?.sessionKey
+    if (!sessionKey) {
+      throw new Error('No session key for agent')
+    }
+
+    const backendBase = window.location.port === '5173'
+      ? 'http://localhost:3001'
+      : window.location.origin
+
+    const res = await fetch(`${backendBase}/api/proxy/send`, {
+      method: 'POST',
+      headers: {
+        'X-Gateway-Token': gatewayToken,
+        'X-Gateway-URL': gatewayUrl,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ sessionKey, message }),
+    })
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}))
+      throw new Error(err.error || `Gateway error: ${res.status}`)
+    }
+  }, [gatewayToken, gatewayUrl])
+
   const selectedAgent = agentDefs.find(a => a.id === selectedId) ?? null
 
     // Show settings screen
@@ -2273,6 +2302,7 @@ export default function App() {
             agentId={selectedAgent.id}
             agentColor={STATE_META[selectedAgent.state].color}
             compact={isCompact}
+            onSend={handleSendToAgent}
           />
         </div>
       )}
