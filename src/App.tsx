@@ -1917,10 +1917,9 @@ export default function App() {
         const [col, row] = screenToTile(mx, my, ox, oy)
         const clampedCol = Math.max(0, Math.min(MAP_COLS - 1, col))
         const clampedRow = Math.max(0, Math.min(MAP_ROWS - 1, row))
-        // Mutate ref directly during drag to avoid 60 setState/sec browser crash
-        decorationsRef.current = decorationsRef.current.map(d =>
-          d._id === dragRef.current!.decoId ? { ...d, col: clampedCol, row: clampedRow } : d
-        )
+        // Mutate in-place during drag — no allocations (same fix as mouse drag)
+        const target = decorationsRef.current.find(d => d._id === dragRef.current!.decoId)
+        if (target) { target.col = clampedCol; target.row = clampedRow }
       }
     } else if (e.touches.length === 1 && touchRef.current) {
       const touch = e.touches[0]
@@ -2019,9 +2018,7 @@ export default function App() {
       throw new Error('No session key for agent')
     }
 
-    const backendBase = window.location.port === '5173'
-      ? 'http://localhost:3001'
-      : window.location.origin
+    const backendBase = 'http://' + window.location.hostname + ':3001'
 
     const res = await fetch(`${backendBase}/api/proxy/send`, {
       method: 'POST',

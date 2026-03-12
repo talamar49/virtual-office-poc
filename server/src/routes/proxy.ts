@@ -135,7 +135,7 @@ proxyRouter.post('/send', async (req: Request, res: Response) => {
       },
       body: JSON.stringify({
         tool: 'sessions_send',
-        params: { sessionKey, message },
+        args: { sessionKey, message, timeoutSeconds: 0 },
       }),
       signal: controller.signal,
     });
