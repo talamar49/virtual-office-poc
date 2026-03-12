@@ -414,6 +414,7 @@ function getDecoImage(type: string): HTMLImageElement | null {
 
 // ── Known agent visuals (backward compatible with our team's sprites) ──
 const KNOWN_AGENTS: Record<string, { name: string; role: string; emoji: string; color: string; frames: number }> = {
+  main:   { name: 'יוגי',   role: 'COO',              emoji: '🐻', color: '#8B4513', frames: 8 },
   yogi:   { name: 'יוגי',   role: 'COO',              emoji: '🐻', color: '#8B4513', frames: 8 },
   omer:   { name: 'עומר',   role: 'Tech Lead',        emoji: '👨‍💻', color: '#2196F3', frames: 8 },
   noa:    { name: 'נועה',   role: 'Frontend/UX',      emoji: '🎨', color: '#E91E63', frames: 8 },
@@ -426,7 +427,6 @@ const KNOWN_AGENTS: Record<string, { name: string; role: string; emoji: string; 
   lior:   { name: 'ליאור',  role: 'Marketing',        emoji: '📈', color: '#00BCD4', frames: 6 },
   tomer:  { name: 'תומר',   role: 'Sales',            emoji: '💼', color: '#795548', frames: 6 },
   alon:   { name: 'אלון',   role: 'Senior Dev',       emoji: '🧑‍💻', color: '#607D8B', frames: 6 },
-  main:   { name: 'Main',   role: 'Main Agent',       emoji: '🏠', color: '#78909C', frames: 6 },
 }
 
 // Fallback colors for unknown agents (cycled)
@@ -1423,6 +1423,8 @@ export default function App() {
     startDist: number
     startZoom: number
   } | null>(null)
+  const lastTouchEndRef = useRef(0)
+  const prevUpdatedAtRef = useRef<Map<string, number>>(new Map())
 
   // Edit mode state
   const [editMode, setEditMode] = useState(false)
@@ -1522,7 +1524,7 @@ export default function App() {
         for (const session of sessions) {
           const keyParts = (session.key || '').split(':')
           const rawId = keyParts[1] || 'unknown'
-          const agentId = rawId === 'main' ? 'yogi' : rawId
+          const agentId = rawId
           const existing = agentSessions.get(agentId)
           if (!existing || (session.updatedAt ?? 0) > (existing.updatedAt ?? 0)) {
             agentSessions.set(agentId, session)
@@ -1583,13 +1585,18 @@ export default function App() {
 
           const updatedAt = new Date(session.updatedAt).getTime()
           const elapsed = Date.now() - updatedAt
+          const prevUpdated = prevUpdatedAtRef.current.get(a.def.id) ?? 0
+          const justChanged = prevUpdated > 0 && updatedAt !== prevUpdated
+          prevUpdatedAtRef.current.set(a.def.id, updatedAt)
 
           let newState: AgentState
           if (session.abortedLastRun) {
             newState = 'error'
-          } else if (elapsed < 30_000) {
-            const lastMsg = session.messages?.[0]
-            newState = lastMsg?.toolCalls?.length > 0 ? 'working' : 'active'
+          } else if (justChanged || elapsed < 15_000) {
+            // updatedAt changed since last poll → actively working
+            newState = 'working'
+          } else if (elapsed < 120_000) {
+            newState = 'active'
           } else if (elapsed < 300_000) {
             newState = 'idle'
           } else {
@@ -1726,6 +1733,8 @@ export default function App() {
   }, [])
 
   const handleClick = useCallback((e: React.MouseEvent<HTMLCanvasElement>) => {
+    // Skip synthetic click fired by browser after touchEnd (prevents double-toggle on mobile)
+    if (Date.now() - lastTouchEndRef.current < 500) return
     const rect = e.currentTarget.getBoundingClientRect()
     const [mx, my] = screenToCanvas(e.clientX, e.clientY, rect)
     const { ox, oy } = originRef.current
@@ -1982,6 +1991,7 @@ export default function App() {
           setSelectedId(prev => prev === agent?.def.id ? null : (agent?.def.id ?? null))
         }
       }
+      lastTouchEndRef.current = Date.now()
       touchRef.current = null
       pinchRef.current = null
     }
