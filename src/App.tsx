@@ -1272,13 +1272,18 @@ function hitTestAgent(
   mx: number, my: number,
   agents: AgentRuntime[],
   ox: number, oy: number,
+  toleranceMul = 1,
 ): AgentRuntime | null {
+  // Hit area: 80×104 px base, expanded by toleranceMul for mobile
+  const hw = 40 * toleranceMul  // half-width
+  const ht = 72 * toleranceMul  // top extent (above anchor)
+  const hb = 32 * toleranceMul  // bottom extent (below anchor)
   const sorted = [...agents].sort((a, b) => (b.x + b.y) - (a.x + a.y))
   for (const agent of sorted) {
     const [ix, iy] = toIso(agent.x, agent.y)
     const sx = ox + ix
     const sy = oy + iy
-    if (mx >= sx - 32 && mx <= sx + 32 && my >= sy - 64 && my <= sy + 24) {
+    if (mx >= sx - hw && mx <= sx + hw && my >= sy - ht && my <= sy + hb) {
       return agent
     }
   }
@@ -1396,6 +1401,8 @@ export default function App() {
   const panRef = useRef({ x: 0, y: 0 })
   const scaleRef = useRef(1)
   const userZoomRef = useRef(1) // user-controlled zoom (pinch/wheel)
+  // Viewport dimensions — kept in sync with animation loop for hit testing consistency
+  const viewportRef = useRef({ w: window.innerWidth, h: window.innerHeight })
   const touchRef = useRef<{
     startX: number; startY: number
     startPanX: number; startPanY: number
@@ -1610,6 +1617,7 @@ export default function App() {
       const dpr = window.devicePixelRatio || 1
       const w = window.innerWidth
       const h = window.innerHeight
+      viewportRef.current = { w, h }
 
       // DPR-aware canvas sizing — only resize when dimensions change (avoids flickering)
       const targetW = w * dpr
@@ -1680,13 +1688,17 @@ export default function App() {
     return () => cancelAnimationFrame(animRef.current)
   }, [hoverAgentId, selectedId, editMode, showSettings])
 
-  // ── Transform screen coords to canvas coords (accounting for scale) ──
+  // ── Transform screen coords to canvas coords (accounting for scale + DPR) ──
   const screenToCanvas = useCallback((clientX: number, clientY: number, rect: DOMRect): [number, number] => {
-    const w = rect.width
-    const h = rect.height
+    // Use viewportRef for consistency with animation loop (avoids rect.width mismatches)
+    const { w, h } = viewportRef.current
     const s = scaleRef.current
-    const mx = (clientX - rect.left - w / 2) / s + w / 2
-    const my = (clientY - rect.top - h / 2) / s + h / 2
+    // Convert client coords to canvas-relative coords using rect offset
+    const relX = clientX - rect.left
+    const relY = clientY - rect.top
+    // Invert the canvas transform: translate(w/2, h/2) → scale(s) → translate(-w/2, -h/2)
+    const mx = (relX - w / 2) / s + w / 2
+    const my = (relY - h / 2) / s + h / 2
     return [mx, my]
   }, [])
 
@@ -1767,9 +1779,10 @@ export default function App() {
         const [col, row] = screenToTile(mx, my, ox, oy)
         const clampedCol = Math.max(0, Math.min(MAP_COLS - 1, col))
         const clampedRow = Math.max(0, Math.min(MAP_ROWS - 1, row))
-        setDecorations(prev => prev.map(d =>
+        // Mutate ref directly during drag to avoid 60 setState/sec browser crash
+        decorationsRef.current = decorationsRef.current.map(d =>
           d._id === dragRef.current!.decoId ? { ...d, col: clampedCol, row: clampedRow } : d
-        ))
+        )
         e.currentTarget.style.cursor = 'grabbing'
         return
       }
@@ -1800,6 +1813,8 @@ export default function App() {
   const handleMouseUp = useCallback((_e: React.MouseEvent<HTMLCanvasElement>) => {
     if (dragRef.current) {
       if (dragRef.current.moved) {
+        // Sync React state from ref now that drag ended, then persist
+        setDecorations([...decorationsRef.current])
         saveLayout(decorationsRef.current)
       }
       dragRef.current = null
@@ -1882,9 +1897,10 @@ export default function App() {
         const [col, row] = screenToTile(mx, my, ox, oy)
         const clampedCol = Math.max(0, Math.min(MAP_COLS - 1, col))
         const clampedRow = Math.max(0, Math.min(MAP_ROWS - 1, row))
-        setDecorations(prev => prev.map(d =>
+        // Mutate ref directly during drag to avoid 60 setState/sec browser crash
+        decorationsRef.current = decorationsRef.current.map(d =>
           d._id === dragRef.current!.decoId ? { ...d, col: clampedCol, row: clampedRow } : d
-        ))
+        )
       }
     } else if (e.touches.length === 1 && touchRef.current) {
       const touch = e.touches[0]
@@ -1904,6 +1920,8 @@ export default function App() {
     if (e.touches.length === 0) {
       if (dragRef.current) {
         if (dragRef.current.moved) {
+          // Sync React state from ref now that drag ended, then persist
+          setDecorations([...decorationsRef.current])
           saveLayout(decorationsRef.current)
         }
         dragRef.current = null
@@ -1935,12 +1953,12 @@ export default function App() {
               setSelectedDecoId(hitDeco._id)
             } else {
               setSelectedDecoId(null)
-              const agent = hitTestAgent(mx, my, agentsRef.current, ox, oy)
+              const agent = hitTestAgent(mx, my, agentsRef.current, ox, oy, 1.3)
               setSelectedId(prev => prev === agent?.def.id ? null : (agent?.def.id ?? null))
             }
           }
         } else {
-          const agent = hitTestAgent(mx, my, agentsRef.current, ox, oy)
+          const agent = hitTestAgent(mx, my, agentsRef.current, ox, oy, 1.3)
           setSelectedId(prev => prev === agent?.def.id ? null : (agent?.def.id ?? null))
         }
       }
