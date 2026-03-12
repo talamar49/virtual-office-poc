@@ -166,6 +166,69 @@ proxyRouter.post('/send', async (req: Request, res: Response) => {
 });
 
 /**
+ * POST /api/proxy/history
+ * 
+ * Fetch recent message history for an agent session.
+ * Body: { sessionKey, limit? }
+ */
+proxyRouter.post('/history', async (req: Request, res: Response) => {
+  const gatewayToken = req.headers['x-gateway-token'] as string | undefined;
+  const gatewayUrl = req.headers['x-gateway-url'] as string | undefined;
+
+  if (!gatewayToken || !gatewayUrl) {
+    res.status(400).json({ error: 'Missing X-Gateway-Token or X-Gateway-URL headers' });
+    return;
+  }
+
+  const { sessionKey, limit = 10 } = req.body ?? {};
+  if (!sessionKey) {
+    res.status(400).json({ error: 'Missing sessionKey in body' });
+    return;
+  }
+
+  try {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), PROXY_TIMEOUT_MS);
+
+    const gatewayRes = await fetch(`${gatewayUrl}/tools/invoke`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${gatewayToken}`,
+      },
+      body: JSON.stringify({
+        tool: 'sessions_history',
+        params: { sessionKey, limit, includeTools: false },
+      }),
+      signal: controller.signal,
+    });
+
+    clearTimeout(timeout);
+
+    if (!gatewayRes.ok) {
+      const errorText = await gatewayRes.text().catch(() => '');
+      res.status(gatewayRes.status).json({
+        error: `Gateway responded ${gatewayRes.status}`,
+        detail: errorText.substring(0, 500),
+      });
+      return;
+    }
+
+    const data = await gatewayRes.json();
+    res.json({ ok: true, result: data?.result ?? data });
+  } catch (err: any) {
+    if (err.name === 'AbortError') {
+      res.status(504).json({ error: `Gateway request timed out (${PROXY_TIMEOUT_MS}ms)` });
+      return;
+    }
+    const msg = err.cause?.code === 'ECONNREFUSED'
+      ? `Cannot connect to Gateway at ${gatewayUrl} — is it running?`
+      : err.message || 'Unknown proxy error';
+    res.status(502).json({ error: msg });
+  }
+});
+
+/**
  * POST /api/proxy/health
  * 
  * Quick connectivity check to the user's Gateway.

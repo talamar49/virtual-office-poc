@@ -3,6 +3,13 @@ import { useRef, useEffect, useState, useCallback } from 'react'
 // ── Types ──
 type AgentState = 'active' | 'idle' | 'working' | 'offline' | 'error'
 
+interface ChatMessage {
+  id: string
+  role: 'user' | 'assistant'
+  text: string
+  ts: number
+}
+
 interface AgentDef {
   id: string
   name: string
@@ -2021,6 +2028,13 @@ export default function App() {
     return () => window.removeEventListener('keydown', handler)
   }, [])
 
+  // Resolve backend base URL (dev vs prod)
+  const getBackendBase = useCallback(() => {
+    return window.location.port === '5173'
+      ? 'http://localhost:3001'
+      : window.location.origin
+  }, [])
+
   // Send message to agent via Gateway proxy
   const handleSendToAgent = useCallback(async (agentId: string, message: string) => {
     const agent = agentDefsRef.current.find(a => a.id === agentId)
@@ -2029,9 +2043,7 @@ export default function App() {
       throw new Error('No session key for agent')
     }
 
-    const backendBase = 'http://' + window.location.hostname + ':3001'
-
-    const res = await fetch(`${backendBase}/api/proxy/send`, {
+    const res = await fetch(`${getBackendBase()}/api/proxy/send`, {
       method: 'POST',
       headers: {
         'X-Gateway-Token': gatewayToken,
@@ -2044,7 +2056,44 @@ export default function App() {
       const err = await res.json().catch(() => ({}))
       throw new Error(err.error || `Gateway error: ${res.status}`)
     }
-  }, [gatewayToken, gatewayUrl])
+  }, [gatewayToken, gatewayUrl, getBackendBase])
+
+  // Fetch chat history for an agent
+  const handleFetchHistory = useCallback(async (agentId: string): Promise<ChatMessage[]> => {
+    const agent = agentDefsRef.current.find(a => a.id === agentId)
+    const sessionKey = agent?.sessionKey
+    if (!sessionKey) return []
+
+    const res = await fetch(`${getBackendBase()}/api/proxy/history`, {
+      method: 'POST',
+      headers: {
+        'X-Gateway-Token': gatewayToken,
+        'X-Gateway-URL': gatewayUrl,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ sessionKey, limit: 10 }),
+    })
+    if (!res.ok) return []
+
+    const data = await res.json()
+    // Parse Gateway history response into ChatMessage[]
+    const history = data?.result?.details?.messages
+      ?? data?.result?.messages
+      ?? data?.result
+      ?? []
+
+    if (!Array.isArray(history)) return []
+
+    return history
+      .filter((m: any) => m.role === 'user' || m.role === 'assistant')
+      .map((m: any, i: number) => ({
+        id: `hist-${i}-${m.timestamp || i}`,
+        role: m.role as 'user' | 'assistant',
+        text: (m.content || m.text || m.preview || '').substring(0, 500),
+        ts: m.timestamp ? new Date(m.timestamp).getTime() : Date.now() - (history.length - i) * 1000,
+      }))
+      .filter((m: ChatMessage) => m.text.length > 0)
+  }, [gatewayToken, gatewayUrl, getBackendBase])
 
   const selectedAgent = agentDefs.find(a => a.id === selectedId) ?? null
 
@@ -2310,12 +2359,13 @@ export default function App() {
             </InfoBox>
           )}
 
-          {/* Chat Input — UI by Noa, logic by Alon */}
+          {/* Chat — bidirectional messaging */}
           <ChatInput
             agentId={selectedAgent.id}
             agentColor={STATE_META[selectedAgent.state].color}
             compact={isCompact}
             onSend={handleSendToAgent}
+            onFetchHistory={handleFetchHistory}
           />
         </div>
       )}
@@ -2341,20 +2391,81 @@ function InfoBox({ label, children }: { label: string; children: React.ReactNode
   )
 }
 
-// ── Chat Input Component ──
-// UI-only — onSend callback for Alon to wire up
+// ── Chat Component (bidirectional) ──
 
 type SendStatus = 'idle' | 'sending' | 'sent' | 'error'
 
-function ChatInput({ agentId, agentColor, compact, onSend }: {
+function ChatInput({ agentId, agentColor, compact, onSend, onFetchHistory }: {
   agentId: string
   agentColor: string
   compact?: boolean
   onSend?: (agentId: string, message: string) => Promise<void> | void
+  onFetchHistory?: (agentId: string) => Promise<ChatMessage[]>
 }) {
   const [text, setText] = useState('')
   const [status, setStatus] = useState<SendStatus>('idle')
+  const [messages, setMessages] = useState<ChatMessage[]>([])
+  const [polling, setPolling] = useState(false)
   const inputRef = useRef<HTMLInputElement>(null)
+  const scrollRef = useRef<HTMLDivElement>(null)
+  const pollTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const prevAgentIdRef = useRef(agentId)
+
+  // Reset messages when switching agents
+  useEffect(() => {
+    if (prevAgentIdRef.current !== agentId) {
+      setMessages([])
+      setPolling(false)
+      if (pollTimerRef.current) clearTimeout(pollTimerRef.current)
+      prevAgentIdRef.current = agentId
+    }
+  }, [agentId])
+
+  // Cleanup polling on unmount
+  useEffect(() => {
+    return () => { if (pollTimerRef.current) clearTimeout(pollTimerRef.current) }
+  }, [])
+
+  // Auto-scroll to bottom when messages change
+  useEffect(() => {
+    if (scrollRef.current) {
+      scrollRef.current.scrollTop = scrollRef.current.scrollHeight
+    }
+  }, [messages])
+
+  // Poll for agent response after sending
+  const startPolling = useCallback(async (sentCount: number) => {
+    if (!onFetchHistory) return
+    setPolling(true)
+    let attempts = 0
+    const maxAttempts = 20 // ~60 seconds max
+
+    const poll = async () => {
+      attempts++
+      try {
+        const history = await onFetchHistory(agentId)
+        setMessages(history)
+
+        // Check if we got a new assistant message after our send
+        const assistantMsgs = history.filter(m => m.role === 'assistant')
+        if (assistantMsgs.length > sentCount) {
+          // Got a response!
+          setPolling(false)
+          return
+        }
+      } catch {
+        // Silently continue polling
+      }
+
+      if (attempts < maxAttempts) {
+        pollTimerRef.current = setTimeout(poll, 3000)
+      } else {
+        setPolling(false)
+      }
+    }
+
+    pollTimerRef.current = setTimeout(poll, 2000)
+  }, [agentId, onFetchHistory])
 
   const handleSend = useCallback(async () => {
     const msg = text.trim()
@@ -2363,15 +2474,28 @@ function ChatInput({ agentId, agentColor, compact, onSend }: {
     setStatus('sending')
     try {
       await onSend?.(agentId, msg)
+      // Add sent message to local state immediately
+      const sentMsg: ChatMessage = {
+        id: `local-${Date.now()}`,
+        role: 'user',
+        text: msg,
+        ts: Date.now(),
+      }
+      setMessages(prev => {
+        const next = [...prev, sentMsg]
+        // Count assistant messages before polling
+        const assistantCount = next.filter(m => m.role === 'assistant').length
+        startPolling(assistantCount)
+        return next
+      })
       setText('')
       setStatus('sent')
-      // Reset to idle after success animation
-      setTimeout(() => setStatus('idle'), 1800)
+      setTimeout(() => setStatus('idle'), 1200)
     } catch {
       setStatus('error')
       setTimeout(() => setStatus('idle'), 2000)
     }
-  }, [text, status, agentId, onSend])
+  }, [text, status, agentId, onSend, startPolling])
 
   const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -2390,8 +2514,71 @@ function ChatInput({ agentId, agentColor, compact, onSend }: {
       paddingTop: 12,
       direction: 'rtl',
     }}>
-      {/* Success / Error animation overlay */}
-      {(status === 'sent' || status === 'error') && (
+      {/* Chat messages */}
+      {messages.length > 0 && (
+        <div
+          ref={scrollRef}
+          style={{
+            maxHeight: compact ? 120 : 180,
+            overflowY: 'auto',
+            marginBottom: 10,
+            display: 'flex',
+            flexDirection: 'column',
+            gap: 6,
+            scrollBehavior: 'smooth',
+          }}
+        >
+          {messages.map(msg => (
+            <div
+              key={msg.id}
+              style={{
+                alignSelf: msg.role === 'user' ? 'flex-start' : 'flex-end',
+                maxWidth: '85%',
+                padding: '8px 12px',
+                borderRadius: msg.role === 'user'
+                  ? '12px 12px 4px 12px'
+                  : '12px 12px 12px 4px',
+                background: msg.role === 'user'
+                  ? 'rgba(255,255,255,0.08)'
+                  : `${agentColor}22`,
+                border: msg.role === 'assistant'
+                  ? `1px solid ${agentColor}44`
+                  : '1px solid rgba(255,255,255,0.06)',
+                fontSize: compact ? 12 : 13,
+                lineHeight: 1.5,
+                color: '#eee',
+                animation: 'chatFadeIn 0.3s ease-out',
+                wordBreak: 'break-word',
+              }}
+            >
+              {msg.role === 'assistant' && (
+                <div style={{ fontSize: 10, color: agentColor, marginBottom: 2, fontWeight: 600 }}>
+                  תגובה
+                </div>
+              )}
+              {msg.text}
+            </div>
+          ))}
+          {polling && (
+            <div style={{
+              alignSelf: 'flex-end',
+              padding: '8px 16px',
+              borderRadius: '12px 12px 12px 4px',
+              background: `${agentColor}11`,
+              border: `1px solid ${agentColor}33`,
+              fontSize: 12,
+              color: '#888',
+              animation: 'chatFadeIn 0.3s ease-out',
+            }}>
+              <span style={{ animation: 'chatSpin 1.5s linear infinite', display: 'inline-block' }}>⏳</span>
+              {' '}ממתין לתגובה...
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Status feedback (only when no messages visible) */}
+      {messages.length === 0 && (status === 'sent' || status === 'error') && (
         <div style={{
           display: 'flex',
           alignItems: 'center',
@@ -2431,7 +2618,7 @@ function ChatInput({ agentId, agentColor, compact, onSend }: {
           style={{
             flex: 1,
             height: inputHeight,
-            minHeight: inputHeight, // touch target
+            minHeight: inputHeight,
             padding: '0 12px',
             borderRadius: 8,
             border: '1px solid rgba(255,255,255,0.1)',
@@ -2459,7 +2646,7 @@ function ChatInput({ agentId, agentColor, compact, onSend }: {
           style={{
             width: inputHeight,
             height: inputHeight,
-            minWidth: inputHeight, // touch target
+            minWidth: inputHeight,
             minHeight: inputHeight,
             borderRadius: 8,
             border: 'none',
@@ -2485,7 +2672,6 @@ function ChatInput({ agentId, agentColor, compact, onSend }: {
           title="שלח"
         >
           {status === 'sending' ? (
-            // Spinning indicator
             <span style={{
               display: 'inline-block',
               width: 16, height: 16,
@@ -2498,7 +2684,7 @@ function ChatInput({ agentId, agentColor, compact, onSend }: {
         </button>
       </div>
 
-      {/* CSS animations (injected once) */}
+      {/* CSS animations */}
       <style>{`
         @keyframes chatFadeIn {
           from { opacity: 0; transform: translateY(4px); }
