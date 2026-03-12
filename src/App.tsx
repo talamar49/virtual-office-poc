@@ -1569,6 +1569,7 @@ export default function App() {
         // Normal update: just update states
         const agentRuntimes = agentsRef.current
         const byIdMap = new Map(sessionEntries)
+        let defsChanged = false
         for (const a of agentRuntimes) {
           const session = byIdMap.get(a.def.id)
           if (!session) continue
@@ -1594,12 +1595,22 @@ export default function App() {
             const [tx, ty] = getTargetTile(a.def)
             a.tx = tx
             a.ty = ty
+            defsChanged = true
           }
 
-          if (session.messages?.[0]?.preview) {
-            a.def.task = session.messages[0].preview.substring(0, 100)
+          const newTask = session.messages?.[0]?.preview?.substring(0, 100) ?? ''
+          if (newTask && newTask !== a.def.task) {
+            a.def.task = newTask
+            defsChanged = true
           }
-          a.def.lastUpdated = updatedAt
+          if (updatedAt !== a.def.lastUpdated) {
+            a.def.lastUpdated = updatedAt
+            defsChanged = true
+          }
+        }
+        // Sync React state so detail panel re-renders with updated task/state
+        if (defsChanged) {
+          setAgentDefs(agentRuntimes.map(a => ({ ...a.def })))
         }
       } catch {
         // Gateway not available, keep static/demo data
@@ -2230,7 +2241,9 @@ export default function App() {
           )}
 
           <InfoBox label="משימה נוכחית">
-            <span style={{ fontSize: isCompact ? 12 : 13, lineHeight: 1.5 }}>{selectedAgent.task}</span>
+            <span style={{ fontSize: isCompact ? 12 : 13, lineHeight: 1.5, color: selectedAgent.task ? undefined : '#666' }}>
+              {selectedAgent.task || (selectedAgent.state === 'offline' ? '💤 לא מחובר' : '⏳ ממתין למשימה')}
+            </span>
           </InfoBox>
 
           {selectedAgent.lastUpdated && (
