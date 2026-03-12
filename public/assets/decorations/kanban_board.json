@@ -4,20 +4,20 @@
       "frame": {
         "x": 0,
         "y": 0,
-        "w": 32,
-        "h": 32
+        "w": 48,
+        "h": 48
       },
       "sourceSize": {
-        "w": 32,
-        "h": 32
+        "w": 48,
+        "h": 48
       }
     }
   },
   "meta": {
     "image": "kanban_board.png",
     "size": {
-      "w": 32,
-      "h": 32
+      "w": 48,
+      "h": 48
     },
     "scale": 1
   }

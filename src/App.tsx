@@ -401,9 +401,10 @@ function loadDecorations() {
 
   // Furniture sprites
   const furnTypes = [
-    'bookshelf', 'chair_office', 'chair_simple', 'coffee_machine',
-    'desk_large', 'desk_l_shaped', 'desk', 'laptop', 'monitor_desktop',
-    'monitor_dual', 'monitor', 'plant_large', 'plant_small', 'printer',
+    'bookshelf', 'carpet', 'chair', 'chair_office', 'chair_simple',
+    'coat_rack', 'coffee_machine', 'desk', 'desk_large', 'desk_l_shaped',
+    'furniture', 'laptop', 'lounge_table', 'monitor', 'monitor_desktop',
+    'monitor_dual', 'plant_large', 'plant_small', 'printer', 'sofa',
     'water_cooler', 'whiteboard',
   ]
   for (const t of furnTypes) {
