@@ -1272,22 +1272,26 @@ function hitTestAgent(
   mx: number, my: number,
   agents: AgentRuntime[],
   ox: number, oy: number,
-  toleranceMul = 1,
+  _toleranceMul = 1,
 ): AgentRuntime | null {
-  // Hit area: 80×104 px base, expanded by toleranceMul for mobile
-  const hw = 40 * toleranceMul  // half-width
-  const ht = 72 * toleranceMul  // top extent (above anchor)
-  const hb = 32 * toleranceMul  // bottom extent (below anchor)
-  const sorted = [...agents].sort((a, b) => (b.x + b.y) - (a.x + a.y))
-  for (const agent of sorted) {
+  // Strategy: find the nearest agent within MAX_DIST pixels
+  // This is far more reliable than tight bounding-box checks
+  const MAX_DIST = 50
+  let best: AgentRuntime | null = null
+  let bestDist = MAX_DIST
+  for (const agent of agents) {
     const [ix, iy] = toIso(agent.x, agent.y)
     const sx = ox + ix
-    const sy = oy + iy
-    if (mx >= sx - hw && mx <= sx + hw && my >= sy - ht && my <= sy + hb) {
-      return agent
+    const sy = oy + iy - 24 // offset up to sprite center (anchor is at feet)
+    const dx = mx - sx
+    const dy = my - sy
+    const dist = Math.sqrt(dx * dx + dy * dy)
+    if (dist < bestDist) {
+      bestDist = dist
+      best = agent
     }
   }
-  return null
+  return best
 }
 
 // ── Settings / Onboarding Screen ──
@@ -1706,7 +1710,6 @@ export default function App() {
     const rect = e.currentTarget.getBoundingClientRect()
     const [mx, my] = screenToCanvas(e.clientX, e.clientY, rect)
     const { ox, oy } = originRef.current
-
     if (editModeRef.current) {
       // If dragging, the click is handled by mouseUp
       if (dragRef.current?.moved) return
