@@ -31,8 +31,8 @@ type Zone = 'work' | 'lounge' | 'bugs'
 // ── Isometric constants ──
 const TILE_W = 64
 const TILE_H = 32
-const BASE_MAP_COLS = 16
-const BASE_MAP_ROWS = 12
+const BASE_MAP_COLS = 20
+const BASE_MAP_ROWS = 16
 const SPRITE_SIZE = 32
 const SPRITE_DISPLAY = 64 // 2x scale
 
@@ -51,19 +51,12 @@ function computeGridSize(agentCount: number) {
     MAP_ROWS = BASE_MAP_ROWS
     return
   }
-  // sqrt-based expansion with minimum 16x12
-  const cubiclesNeeded = agentCount
-  const cubicleColSlots = 4 // max cubicles per row
-  const rowsNeeded = Math.ceil(cubiclesNeeded / cubicleColSlots)
-  // Each row of cubicles takes 3 tiles vertically, plus 2 for walls/corridors
-  const workRows = rowsNeeded * 3 + 2
+  // Expanded spacing: 3-tile horizontal, 4-tile vertical per cubicle
+  const cubicleColSlots = 4
+  const rowsNeeded = Math.ceil(agentCount / cubicleColSlots)
+  const workRows = rowsNeeded * 4 + 2
   MAP_ROWS = Math.max(BASE_MAP_ROWS, workRows)
-  // Width stays the same unless we need more cols
-  if (cubicleColSlots > 4) {
-    MAP_COLS = Math.max(BASE_MAP_COLS, 5 + cubicleColSlots * 2 + 1)
-  } else {
-    MAP_COLS = BASE_MAP_COLS
-  }
+  MAP_COLS = Math.max(BASE_MAP_COLS, 5 + cubicleColSlots * 3 + 1)
 }
 
 // ── Responsive breakpoints ──
@@ -182,7 +175,8 @@ function generateCubiclePositions(count: number): [number, number][] {
   const positions: [number, number][] = []
   for (let r = 0; r < rows; r++) {
     for (let c = 0; c < cols && positions.length < count; c++) {
-      positions.push([5 + c * 2, 1 + r * 3])
+      // 3-tile horizontal spacing, 4-tile vertical spacing — no overlap
+      positions.push([5 + c * 3, 1 + r * 4])
     }
   }
   return positions
@@ -202,9 +196,9 @@ function clampPan(pan: { x: number; y: number }) {
 
 // ── Lounge furniture positions ──
 const SOFA_POSITIONS: [number, number][] = [
-  [1, 2], [1, 5], [2, 8], [3, 4],
+  [1, 2], [1, 6], [2, 10], [3, 14],
 ]
-const COFFEE_TABLE: [number, number] = [2, 4]
+const COFFEE_TABLE: [number, number] = [2, 5]
 const COFFEE_MACHINE: [number, number] = [0, 0]
 
 // ── Bug zone workstation positions (dynamic) ──
@@ -503,15 +497,16 @@ function getZoneForState(state: AgentState): Zone {
 }
 
 // ── Lounge spots (12+ unique positions spread across cols 0-3, rows 0-11) ──
-// Spots spaced ≥2 tiles apart to prevent visual overlap (SPRITE_DISPLAY=64px)
+// Spots spaced ≥3 tiles apart — generous spacing for larger map (20×16)
 const LOUNGE_SPOTS: [number, number][] = [
-  [0, 1], [2, 1], [0, 4], [2, 4], [1, 7], [3, 7],
-  [0, 10], [2, 10], [1, 2], [3, 5], [1, 9], [3, 9],
+  [0, 1], [3, 1], [0, 4], [3, 4], [0, 7], [3, 7],
+  [0, 10], [3, 10], [1, 13], [3, 13], [0, 15], [3, 15],
 ]
 
 // ── Bug zone spots (5 unique positions) ──
+// Bug zone spots — spaced out in the larger map
 const BUG_SPOTS: [number, number][] = [
-  [11, 9], [13, 9], [12, 10], [11, 11], [14, 10],
+  [15, 13], [18, 13], [15, 15], [18, 15], [17, 14],
 ]
 
 // Track which lounge/bug spots are taken (by agent id)
