@@ -337,6 +337,14 @@ const AVAILABLE_DECO_TYPES = [
   { type: 'stickers', label: 'מדבקות', emoji: '🏷️' },
   { type: 'wireframes', label: 'וויירפריימס', emoji: '📐' },
   { type: 'tea_cup', label: 'תה', emoji: '🍵' },
+  { type: 'poster', label: 'פוסטר', emoji: '🎨' },
+  { type: 'lamp', label: 'מנורה', emoji: '💡' },
+  { type: 'trash_bin', label: 'פח', emoji: '🗑️' },
+  { type: 'clock', label: 'שעון', emoji: '🕐' },
+  { type: 'fan', label: 'מאוורר', emoji: '🌀' },
+  { type: 'calendar', label: 'לוח שנה', emoji: '📅' },
+  { type: 'headphones', label: 'אוזניות', emoji: '🎧' },
+  { type: 'warning_sign', label: 'שלט אזהרה', emoji: '⚠️' },
 ]
 
 // Decoration hit-test
@@ -379,10 +387,11 @@ function loadDecorations() {
 
   // Decoration sprites
   const decoTypes = [
-    'alert_light', 'candle', 'kanban_board', 'keyboard', 'monitor_wall',
-    'motivation_sign', 'mouse', 'mug', 'phone', 'picture_frame',
-    'server_rack_mini', 'stickers', 'tea_cup', 'team_photo', 'trophy',
-    'window', 'wireframes',
+    'alert_light', 'calendar', 'candle', 'clock', 'fan', 'headphones',
+    'kanban_board', 'keyboard', 'lamp', 'monitor_wall', 'motivation_sign',
+    'mouse', 'mug', 'phone', 'picture_frame', 'plant', 'plant_tall',
+    'poster', 'server_rack_mini', 'stickers', 'tea_cup', 'team_photo',
+    'trash_bin', 'trophy', 'warning_sign', 'window', 'wireframes',
   ]
   for (const t of decoTypes) {
     const img = new Image()

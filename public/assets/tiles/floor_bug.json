@@ -1,0 +1,24 @@
+{
+  "frames": {
+    "floor_bug": {
+      "frame": {
+        "x": 0,
+        "y": 0,
+        "w": 64,
+        "h": 32
+      },
+      "sourceSize": {
+        "w": 64,
+        "h": 32
+      }
+    }
+  },
+  "meta": {
+    "image": "floor_bug.png",
+    "size": {
+      "w": 64,
+      "h": 32
+    },
+    "scale": 1
+  }
+}
