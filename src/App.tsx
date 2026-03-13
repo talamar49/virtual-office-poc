@@ -2960,7 +2960,7 @@ export default function App() {
           <div key={a.id} onClick={() => setSelectedId(s => s === a.id ? null : a.id)} style={{
             display: 'flex', alignItems: 'center', gap: isCompact ? 2 : isMobile ? 3 : 5,
             padding: isCompact ? '3px 3px' : isMobile ? '2px 5px' : '3px 8px',
-            borderRadius: 0, cursor: 'pointer', fontSize: isCompact ? 7 : isMobile ? 7 : 8,
+            borderRadius: 0, cursor: 'pointer', fontSize: isCompact ? 11 : isMobile ? 12 : 13,
             background: selectedId === a.id ? 'rgba(100,100,200,0.3)' : 'transparent',
             whiteSpace: 'nowrap', flexShrink: 0,
             // Minimum touch target 44px height on mobile
