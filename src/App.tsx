@@ -1253,20 +1253,21 @@ function drawAgent(
       const bubbleW = tw + padX * 2
       const bubbleH = 16
 
-      // Bubble background
+      // Bubble background — color varies by state
       const bx = Math.round(sx - bubbleW / 2)
       const by = taskY - bubbleH
-      ctx.fillStyle = 'rgba(45, 55, 80, 0.92)'
+      const bgColor = isOffline ? 'rgba(30, 30, 40, 0.70)' : 'rgba(45, 55, 80, 0.92)'
+      ctx.fillStyle = bgColor
       ctx.beginPath()
       ctx.roundRect(bx, by, bubbleW, bubbleH, 5)
       ctx.fill()
-      ctx.strokeStyle = 'rgba(255,255,255,0.18)'
+      ctx.strokeStyle = `${STATE_META[agent.def.state].color}33`
       ctx.lineWidth = 0.5
       ctx.stroke()
 
       // Pointer arrow (small triangle pointing down)
       const arrowW = 6
-      ctx.fillStyle = 'rgba(45, 55, 80, 0.92)'
+      ctx.fillStyle = bgColor
       ctx.beginPath()
       ctx.moveTo(sx - arrowW, taskY)
       ctx.lineTo(sx + arrowW, taskY)
@@ -1275,7 +1276,7 @@ function drawAgent(
       ctx.fill()
 
       // Task text
-      ctx.fillStyle = '#dde4ff'
+      ctx.fillStyle = isOffline ? '#888' : '#dde4ff'
       ctx.fillText(taskText, Math.round(sx), taskY - padY)
     }
   }
@@ -2038,7 +2039,7 @@ export default function App() {
           discoveredRef.current = true
           const newDefs: AgentDef[] = sessionEntries.map(([id, s], i) => {
             const updatedAt = new Date(s.updatedAt).getTime()
-            const taskText = extractTaskFromSession(s)
+            const { text: taskText } = extractTaskFromSession(s)
             const def = agentDefFromSession(s.key, i, updatedAt, !!s.abortedLastRun, taskText)
             def.model = s.model ?? undefined
             def.tokenUsage = s.totalTokens ?? undefined
@@ -2067,9 +2068,9 @@ export default function App() {
           const newDefs: AgentDef[] = sessionEntries.map(([id, s], i) => {
             const existing = currentDefs.find(d => d.id === id)
             const updatedAt = new Date(s.updatedAt).getTime()
-            const taskText = extractTaskFromSession(s)
+            const { text: taskText, isFallback: taskIsFallback } = extractTaskFromSession(s)
             const def = agentDefFromSession(s.key, existing?.cubicleIndex ?? i, updatedAt, !!s.abortedLastRun, taskText)
-            if (existing) { def.task = taskText || existing.task }
+            if (existing) { def.task = (!taskIsFallback && taskText) ? taskText : (existing.task || taskText) }
             return def
           })
           setAgentDefs(newDefs)
@@ -2750,7 +2751,7 @@ export default function App() {
           >
             <span style={{ fontSize: isCompact ? 18 : 22 }}>{n.agentEmoji}</span>
             <div>
-              <div style={{ fontSize: isCompact ? 7 : 8, color: '#eee', marginBottom: 2 }}>
+              <div style={{ fontSize: isCompact ? 12 : 13, color: '#eee', marginBottom: 2 }}>
                 {n.agentName}
               </div>
               <div style={{ fontSize: isCompact ? 6 : 7, color: '#4a6aff' }}>
@@ -3038,21 +3039,21 @@ export default function App() {
           )}
 
           <InfoBox label="משימה נוכחית">
-            <span style={{ fontSize: isCompact ? 7 : 8, lineHeight: 1.8, color: selectedAgent.task ? undefined : '#666' }}>
-              {selectedAgent.task || (selectedAgent.state === 'offline' ? '💤 לא מחובר' : '⏳ ממתין למשימה')}
+            <span style={{ fontSize: isCompact ? 12 : 13, lineHeight: 1.5, color: selectedAgent.task ? undefined : '#666' }}>
+              {selectedAgent.task || TASK_FALLBACKS[selectedAgent.state] || '⏳ ממתין למשימה'}
             </span>
           </InfoBox>
 
           {selectedAgent.lastUpdated && (
             <InfoBox label="עדכון אחרון">
-              <span style={{ fontSize: isCompact ? 7 : 8, color: '#aaa' }}>
+              <span style={{ fontSize: isCompact ? 12 : 13, color: '#aaa' }}>
                 🕐 {timeAgo(selectedAgent.lastUpdated)}
               </span>
             </InfoBox>
           )}
 
           <InfoBox label="אזור">
-            <span style={{ fontSize: isCompact ? 7 : 8 }}>
+            <span style={{ fontSize: isCompact ? 12 : 13 }}>
               {getZoneForState(selectedAgent.state) === 'work' ? '💻 Work Zone'
                 : getZoneForState(selectedAgent.state) === 'bugs' ? '🐛 Bug Zone'
                 : '☕ Lounge'}

@@ -61,7 +61,7 @@ proxyRouter.post('/sessions', async (req: Request, res: Response) => {
       },
       body: JSON.stringify({
         tool: 'sessions_list',
-        params: { activeMinutes, messageLimit },
+        args: { activeMinutes, messageLimit },
       }),
       signal: controller.signal,
     });
@@ -198,7 +198,7 @@ proxyRouter.post('/history', async (req: Request, res: Response) => {
       },
       body: JSON.stringify({
         tool: 'sessions_history',
-        params: { sessionKey, limit, includeTools: false },
+        args: { sessionKey, limit, includeTools: false },
       }),
       signal: controller.signal,
     });
@@ -257,7 +257,7 @@ proxyRouter.post('/health', async (req: Request, res: Response) => {
       },
       body: JSON.stringify({
         tool: 'sessions_list',
-        params: { activeMinutes: 1, messageLimit: 0 },
+        args: { activeMinutes: 1, messageLimit: 0 },
       }),
       signal: controller.signal,
     });
