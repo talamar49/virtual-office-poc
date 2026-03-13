@@ -59,11 +59,20 @@ const LOUNGE_COLS = 5        // cols 0-4 for lounge
 const WORK_START_COL = 7     // work zone starts at col 7 (gap between zones)
 const WORK_COLS_PER_AGENT = 5
 const WORK_ROWS_PER_AGENT = 4
-const WORK_AGENTS_PER_ROW = 3
+// Dynamic agents per row: aim for ~3-4 rows, adapting to agent count
+function getWorkAgentsPerRow(agentCount: number): number {
+  if (agentCount <= 6) return 3
+  if (agentCount <= 12) return 4
+  // For 13+: ceil(sqrt) gives roughly square layout (14→4, 16→4, 20→5, 25→5)
+  return Math.min(6, Math.ceil(Math.sqrt(agentCount)))
+}
+let WORK_AGENTS_PER_ROW = 3
 const LOUNGE_ROWS_PER_AGENT = 3
 
 function computeGridSize(agentCount: number) {
-  // Work zone: 3 per row, 5-col spacing
+  // Update dynamic agents-per-row based on count
+  WORK_AGENTS_PER_ROW = getWorkAgentsPerRow(agentCount)
+  // Work zone: dynamic per row, 5-col spacing
   const workRows = Math.ceil(agentCount / WORK_AGENTS_PER_ROW)
   const workHeight = workRows * WORK_ROWS_PER_AGENT + 3
 
