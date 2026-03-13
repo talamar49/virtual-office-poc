@@ -178,8 +178,10 @@ function generateFloorMap(): number[][] {
   for (let row = 0; row < MAP_ROWS; row++) {
     const r: number[] = []
     for (let col = 0; col < MAP_COLS; col++) {
-      // Unified floor — all tiles same type, subtle checkerboard only
-      r.push(0)
+      const zone = getZoneAt(col, row)
+      if (zone === 'lounge') r.push(2)       // carpet/lounge
+      else if (zone === 'bugs') r.push(3)    // dark/bug zone
+      else r.push(0)                          // work zone
     }
     map.push(r)
   }
@@ -207,18 +209,23 @@ interface WallTile {
 /** Generate walls for current grid dimensions */
 function generateWalls(): WallTile[] {
   const walls: WallTile[] = [
+    // Top wall (full width)
     { col: 0, row: -1, type: 'corner_tl' },
     ...Array.from({ length: MAP_COLS - 1 }, (_, i) => ({
       col: i + 1, row: -1,
       type: (i % 5 === 3) ? 'window' as const : 'top' as const,
     })),
     { col: MAP_COLS, row: -1, type: 'corner_tr' },
-    // Left wall
+    // Left wall (full height)
     ...Array.from({ length: MAP_ROWS }, (_, i) => ({
       col: -1, row: i,
       type: (i % 5 === 2) ? 'window' as const : 'left' as const,
     })),
-    // Zone divider removed — unified floor
+    // Right wall (full height) — mirrors left wall
+    ...Array.from({ length: MAP_ROWS }, (_, i) => ({
+      col: MAP_COLS, row: i,
+      type: (i % 5 === 2) ? 'window' as const : 'right' as const,
+    })),
   ]
   return walls
 }
@@ -1225,7 +1232,7 @@ function drawAgent(
   // ── Name label + Status dot (next to name) ──
   const nameY = Math.round(sy + 18 + breathOffset + sitOffset)
   const nameX = Math.round(sx)
-  ctx.font = 'bold 11px "Segoe UI", Arial, sans-serif'
+  ctx.font = 'bold 11px "Heebo", "Segoe UI", sans-serif'
   ctx.textAlign = 'center'
   ctx.fillStyle = isOffline ? '#666' : '#eee'
   ctx.fillText(agent.def.name, nameX, nameY)
@@ -1245,7 +1252,7 @@ function drawAgent(
     if (taskText) {
       const arrowH = 5
       const taskY = Math.round(sy - SPRITE_DISPLAY - 2 - arrowH + breathOffset)
-      ctx.font = '10px "Segoe UI", Arial, sans-serif'
+      ctx.font = '10px "Heebo", "Segoe UI", sans-serif'
       ctx.textAlign = 'center'
       const tw = ctx.measureText(taskText).width
       const padX = 8
@@ -1301,7 +1308,7 @@ function drawAgent(
       const floatY = -progress * 8
       const chatY = Math.round(sy - SPRITE_DISPLAY - 20 + breathOffset + floatY)
 
-      ctx.font = '10px "Segoe UI", Arial, sans-serif'
+      ctx.font = '10px "Heebo", "Segoe UI", sans-serif'
       ctx.textAlign = 'center'
 
       // Word wrap for longer messages
@@ -1435,12 +1442,12 @@ function drawScene(
 
   // Title
   ctx.fillStyle = '#7a7aaa'
-  ctx.font = `bold ${f.title}px "Segoe UI", sans-serif`
+  ctx.font = `bold ${f.title}px "Heebo", "Segoe UI", sans-serif`
   ctx.textAlign = 'center'
   ctx.fillText('🏢 Tal Amar — Virtual Office', w / 2, 28)
 
   // Zone labels — positioned relative to dynamic grid
-  ctx.font = `${f.zone}px "Segoe UI", sans-serif`
+  ctx.font = `${f.zone}px "Heebo", "Segoe UI", sans-serif`
   ctx.fillStyle = 'rgba(255,255,255,0.25)'
   const [lx, ly] = toIso(1.5, Math.min(5.5, MAP_ROWS / 2))
   ctx.fillText('☕ Lounge', ox + lx, oy + ly - 30)
@@ -1510,7 +1517,7 @@ function drawScene(
         const [ix, iy] = toIso(cc, cr)
         const sx = ox + ix
         const sy = oy + iy
-        ctx.font = '9px "Segoe UI", sans-serif'
+        ctx.font = '9px "Heebo", "Segoe UI", sans-serif'
         ctx.textAlign = 'center'
         // Only show desk label when agent is NOT at desk (so you know whose desk it is)
         const isAtDesk = getZoneForState(owner.state) === 'work'
@@ -1573,7 +1580,7 @@ function drawScene(
   if (edit.active) {
     ctx.fillStyle = 'rgba(40,40,80,0.12)'
     ctx.fillRect(0, 0, w, h)
-    ctx.font = `bold ${f.title}px "Segoe UI", sans-serif`
+    ctx.font = `bold ${f.title}px "Heebo", "Segoe UI", sans-serif`
     ctx.textAlign = 'center'
     ctx.fillStyle = 'rgba(150,150,255,0.6)'
     ctx.fillText('מצב עריכה', w / 2, 50)
@@ -3038,11 +3045,11 @@ export default function App() {
             </>
           )}
 
-          <InfoBox label="משימה נוכחית">
-            <span style={{ fontSize: isCompact ? 12 : 13, lineHeight: 1.5, color: selectedAgent.task ? undefined : '#666' }}>
-              {selectedAgent.task || TASK_FALLBACKS[selectedAgent.state] || '⏳ ממתין למשימה'}
-            </span>
-          </InfoBox>
+          <ExpandableTask
+            task={selectedAgent.task || TASK_FALLBACKS[selectedAgent.state] || '⏳ ממתין למשימה'}
+            hasRealTask={!!selectedAgent.task}
+            compact={isCompact}
+          />
 
           {selectedAgent.lastUpdated && (
             <InfoBox label="עדכון אחרון">
@@ -3091,13 +3098,57 @@ function timeAgo(ts: number | undefined): string {
 
 function InfoBox({ label, children }: { label: string; children: React.ReactNode }) {
   return (
-    <div style={{ background: 'rgba(255,255,255,0.05)', borderRadius: 0, padding: 10, marginBottom: 10,
-      border: '2px solid #2a2a4a', boxShadow: 'inset -1px -1px 0 #0a0a1a, inset 1px 1px 0 #2a2a4a',
-      fontFamily: '"Press Start 2P", cursive',
-    }}>
-      <div style={{ fontSize: 7, color: '#7a7aaa', marginBottom: 4 }}>{label}</div>
+    <div style={{ background: 'rgba(255,255,255,0.05)', borderRadius: 8, padding: 12, marginBottom: 10 }}>
+      <div style={{ fontSize: 11, color: '#888', marginBottom: 4, fontFamily: '"Heebo", sans-serif' }}>{label}</div>
       {children}
     </div>
+  )
+}
+
+function ExpandableTask({ task, hasRealTask, compact }: {
+  task: string
+  hasRealTask: boolean
+  compact?: boolean
+}) {
+  const [expanded, setExpanded] = useState(false)
+  const isLong = task.length > 40
+
+  return (
+    <InfoBox label="משימה נוכחית">
+      <div
+        onClick={isLong ? () => setExpanded(e => !e) : undefined}
+        style={{
+          fontSize: compact ? 12 : 13,
+          lineHeight: 1.5,
+          color: hasRealTask ? '#eee' : '#666',
+          fontFamily: '"Heebo", sans-serif',
+          cursor: isLong ? 'pointer' : 'default',
+          overflow: expanded ? 'visible' : 'hidden',
+          textOverflow: expanded ? 'unset' : 'ellipsis',
+          whiteSpace: expanded ? 'normal' : 'nowrap',
+          maxWidth: '100%',
+          wordBreak: expanded ? 'break-word' : undefined,
+          transition: 'all 0.2s ease',
+        }}
+      >
+        {task}
+      </div>
+      {isLong && (
+        <div
+          onClick={() => setExpanded(e => !e)}
+          style={{
+            fontSize: 11,
+            color: '#6688cc',
+            cursor: 'pointer',
+            marginTop: 4,
+            userSelect: 'none',
+            fontFamily: '"Heebo", sans-serif',
+          }}
+        >
+          {expanded ? '▲ פחות' : '▼ עוד...'}
+        </div>
+      )}
+    </InfoBox>
   )
 }
 
