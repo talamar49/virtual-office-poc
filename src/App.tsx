@@ -446,27 +446,40 @@ const FALLBACK_COLORS = [
 ]
 
 // Build AgentDef from a session key (e.g. "agent:yogi:discord:channel:123")
+/** State-based fallback labels when no real task text is available */
+const TASK_FALLBACKS: Record<string, string> = {
+  working: 'עובד...',
+  active: 'מחובר',
+  idle: 'ממתין',
+  offline: 'לא מחובר',
+  error: 'שגיאה',
+}
+
 /** Extract best task text from a session's last message(s) */
-function extractTaskFromSession(session: any): string {
+function extractTaskFromSession(session: any, state?: string): { text: string; isFallback: boolean } {
   const msgs = session.messages ?? []
   // Try messages in order (most recent first)
   for (const m of msgs) {
     // Try preview first (human-readable summary)
     const preview = m.preview?.substring(0, 100)?.trim()
-    if (preview) return preview
+    if (preview) return { text: preview, isFallback: false }
     // Try content (could be string or array)
     const content = typeof m.content === 'string'
       ? m.content.substring(0, 100).trim()
       : Array.isArray(m.content)
         ? m.content.find((c: any) => c.type === 'text')?.text?.substring(0, 100)?.trim()
         : undefined
-    if (content) return content
+    if (content) return { text: content, isFallback: false }
     // Try text field
     const text = m.text?.substring(0, 100)?.trim()
-    if (text) return text
+    if (text) return { text: text, isFallback: false }
   }
   // Fallback: session label or description if available
-  return session.label?.substring(0, 100) ?? ''
+  const label = session.label?.substring(0, 100)?.trim()
+  if (label) return { text: label, isFallback: false }
+  // Final fallback: state-based label
+  const fallback = (state && TASK_FALLBACKS[state]) || ''
+  return { text: fallback, isFallback: true }
 }
 
 function agentDefFromSession(sessionKey: string, index: number, updatedAt: number, aborted: boolean, lastMsg?: string): AgentDef {
@@ -1226,32 +1239,43 @@ function drawAgent(
   ctx.fillStyle = STATE_META[agent.def.state].color
   ctx.fill()
 
-  // ── Task label — small bubble above working agents ──
-  if ((agent.def.state === 'working' || agent.def.state === 'active') && agent.def.task) {
+  // ── Task label — speech bubble above every agent showing current task ──
+  if (agent.def.task) {
     const taskText = shortTask(agent.def.task)
     if (taskText) {
-      const taskY = Math.round(sy - SPRITE_DISPLAY - 2 + breathOffset)
-      ctx.font = '9px "Segoe UI", Arial, sans-serif'
+      const arrowH = 5
+      const taskY = Math.round(sy - SPRITE_DISPLAY - 2 - arrowH + breathOffset)
+      ctx.font = '10px "Segoe UI", Arial, sans-serif'
       ctx.textAlign = 'center'
       const tw = ctx.measureText(taskText).width
-      const padX = 6
-      const padY = 3
+      const padX = 8
+      const padY = 4
       const bubbleW = tw + padX * 2
-      const bubbleH = 14
+      const bubbleH = 16
 
       // Bubble background
       const bx = Math.round(sx - bubbleW / 2)
       const by = taskY - bubbleH
-      ctx.fillStyle = 'rgba(30, 40, 60, 0.85)'
+      ctx.fillStyle = 'rgba(45, 55, 80, 0.92)'
       ctx.beginPath()
-      ctx.roundRect(bx, by, bubbleW, bubbleH, 4)
+      ctx.roundRect(bx, by, bubbleW, bubbleH, 5)
       ctx.fill()
-      ctx.strokeStyle = 'rgba(255,255,255,0.1)'
+      ctx.strokeStyle = 'rgba(255,255,255,0.18)'
       ctx.lineWidth = 0.5
       ctx.stroke()
 
+      // Pointer arrow (small triangle pointing down)
+      const arrowW = 6
+      ctx.fillStyle = 'rgba(45, 55, 80, 0.92)'
+      ctx.beginPath()
+      ctx.moveTo(sx - arrowW, taskY)
+      ctx.lineTo(sx + arrowW, taskY)
+      ctx.lineTo(sx, taskY + arrowH)
+      ctx.closePath()
+      ctx.fill()
+
       // Task text
-      ctx.fillStyle = '#aac'
+      ctx.fillStyle = '#dde4ff'
       ctx.fillText(taskText, Math.round(sx), taskY - padY)
     }
   }
@@ -2117,10 +2141,14 @@ export default function App() {
             }
           }
 
-          const newTask = extractTaskFromSession(session)
+          const { text: newTask, isFallback: newTaskIsFallback } = extractTaskFromSession(session, newState)
           if (newTask && newTask !== a.def.task) {
-            a.def.task = newTask
-            defsChanged = true
+            // Don't overwrite a real task with a fallback label
+            const currentIsFallback = !a.def.task || Object.values(TASK_FALLBACKS).includes(a.def.task)
+            if (!newTaskIsFallback || currentIsFallback) {
+              a.def.task = newTask
+              defsChanged = true
+            }
           }
           if (updatedAt !== a.def.lastUpdated) {
             a.def.lastUpdated = updatedAt
