@@ -72,16 +72,18 @@ const LOUNGE_ROWS_PER_AGENT = 3
 function computeGridSize(agentCount: number) {
   // Update dynamic agents-per-row based on count
   WORK_AGENTS_PER_ROW = getWorkAgentsPerRow(agentCount)
-  // Work zone: rows × 4-tile spacing + margin
-  const workRows = Math.ceil(agentCount / WORK_AGENTS_PER_ROW)
+
+  // Work zone: size for ~80% of agents (worst realistic case, not 100%)
+  const maxWorkAgents = Math.ceil(agentCount * 0.8)
+  const workRows = Math.ceil(maxWorkAgents / WORK_AGENTS_PER_ROW)
   const workHeight = workRows * WORK_ROWS_PER_AGENT + 3
 
-  // Lounge: 2 per row, estimate max ~60% idle at once
-  const maxLoungeAgents = Math.ceil(agentCount * 0.6)
+  // Lounge: 2 per row, ~50% idle max
+  const maxLoungeAgents = Math.ceil(agentCount * 0.5)
   const loungeRows = Math.ceil(maxLoungeAgents / 2)
   const loungeHeight = loungeRows * LOUNGE_ROWS_PER_AGENT + 3
 
-  MAP_ROWS = Math.max(BASE_MAP_ROWS, workHeight, loungeHeight)
+  MAP_ROWS = Math.min(20, Math.max(BASE_MAP_ROWS, workHeight, loungeHeight))
   MAP_COLS = Math.max(BASE_MAP_COLS, WORK_START_COL + WORK_AGENTS_PER_ROW * WORK_COLS_PER_AGENT + 2)
 }
 
@@ -593,6 +595,7 @@ function generateBugSpots(): [number, number][] {
 let BUG_SPOTS = generateBugSpots()
 
 // Track which lounge/bug spots are taken (by agent id)
+const workAssignments: Map<string, number> = new Map()
 const loungeAssignments: Map<string, number> = new Map()
 const bugAssignments: Map<string, number> = new Map()
 
@@ -616,24 +619,22 @@ function assignSpot(agentId: string, spots: [number, number][], assignments: Map
   return [bx + 0.5, by + 0.5]
 }
 
-function releaseSpot(agentId: string) {
-  loungeAssignments.delete(agentId)
-  bugAssignments.delete(agentId)
-}
-
 function getTargetTile(agent: AgentDef): [number, number] {
   const zone = getZoneForState(agent.state)
   if (zone === 'work') {
-    // Always return the agent's FIXED cubicle
-    releaseSpot(agent.id) // free any lounge/bug spot
-    return CUBICLE_POSITIONS[agent.cubicleIndex]
+    // Dynamic assignment — working agents fill consecutive cubicle positions
+    loungeAssignments.delete(agent.id)
+    bugAssignments.delete(agent.id)
+    return assignSpot(agent.id, CUBICLE_POSITIONS, workAssignments)
   }
   if (zone === 'bugs') {
-    loungeAssignments.delete(agent.id) // free lounge if was there
+    workAssignments.delete(agent.id)
+    loungeAssignments.delete(agent.id)
     return assignSpot(agent.id, BUG_SPOTS, bugAssignments)
   }
   // lounge (idle / offline)
-  bugAssignments.delete(agent.id) // free bug zone if was there
+  workAssignments.delete(agent.id)
+  bugAssignments.delete(agent.id)
   return assignSpot(agent.id, LOUNGE_SPOTS, loungeAssignments)
 }
 
@@ -644,11 +645,14 @@ function buildAgents(defs: AgentDef[]): AgentRuntime[] {
   WALLS = generateWalls()
   BUG_WORKSTATIONS = generateBugWorkstations()
   BUG_SPOTS = generateBugSpots()
-  CUBICLE_POSITIONS = generateCubiclePositions(defs.length)
+  // Generate enough cubicles for realistic max working count (not all agents)
+  const maxWorkCount = Math.ceil(defs.length * 0.8)
+  CUBICLE_POSITIONS = generateCubiclePositions(maxWorkCount)
   // Regenerate lounge spots — enough for ALL agents
   LOUNGE_SPOTS = generateLoungeSpots(defs.length)
   LOUNGE_SOFA_POSITIONS = LOUNGE_SPOTS.map(([c, r]): [number, number] => [c + 1, r - 1])
   // Reset spot assignments
+  workAssignments.clear()
   loungeAssignments.clear()
   bugAssignments.clear()
   return defs.map(def => {
