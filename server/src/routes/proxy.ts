@@ -1,26 +1,242 @@
 /**
- * Gateway Proxy Routes
+ * Gateway Proxy Routes — v2
  * 
  * Generic proxy that forwards requests to any OpenClaw Gateway.
  * The user's token + URL come from request headers, NOT from server .env.
  * This solves CORS — the browser talks to our backend, we talk to the Gateway.
+ * 
+ * Features:
+ * - Routing validation (agentId ↔ sessionKey match)
+ * - Chat history persistence (in-memory, merged with Gateway history)
+ * - Response watcher → WebSocket streaming
  */
 
 import { Router, type Request, type Response } from 'express';
+import { broadcast } from '../ws/handler.js';
 
 export const proxyRouter: ReturnType<typeof Router> = Router();
 
 const PROXY_TIMEOUT_MS = 15_000;
 
+// ── Chat History Store ──
+// In-memory store that keeps all chat messages per agent.
+// Merges office-chat messages with Gateway session history.
+
+interface StoredMessage {
+  id: string;
+  role: 'user' | 'assistant';
+  text: string;
+  timestamp: string;     // ISO string
+  source: 'office' | 'gateway';  // where the message came from
+}
+
+const chatHistory = new Map<string, StoredMessage[]>();
+const MAX_HISTORY_PER_AGENT = 200;
+
+function addMessage(agentId: string, msg: StoredMessage): void {
+  if (!chatHistory.has(agentId)) chatHistory.set(agentId, []);
+  const history = chatHistory.get(agentId)!;
+
+  // Deduplicate by id
+  if (history.some(m => m.id === msg.id)) return;
+
+  history.push(msg);
+
+  // Trim old messages
+  if (history.length > MAX_HISTORY_PER_AGENT) {
+    history.splice(0, history.length - MAX_HISTORY_PER_AGENT);
+  }
+}
+
+function getHistory(agentId: string): StoredMessage[] {
+  return chatHistory.get(agentId) ?? [];
+}
+
+/**
+ * Merge Gateway history into local store.
+ * Gateway messages get source='gateway', office messages keep source='office'.
+ */
+function mergeGatewayHistory(agentId: string, gatewayMessages: any[]): StoredMessage[] {
+  for (const m of gatewayMessages) {
+    if (m.role !== 'user' && m.role !== 'assistant') continue;
+
+    let text = '';
+    if (typeof m.content === 'string') {
+      text = m.content;
+    } else if (Array.isArray(m.content)) {
+      const textBlock = m.content.find((b: any) => b.type === 'text');
+      text = textBlock?.text ?? '';
+    } else if (m.text) {
+      text = m.text;
+    } else if (m.preview) {
+      text = m.preview;
+    }
+
+    if (!text.trim()) continue;
+
+    const ts = m.timestamp ? new Date(m.timestamp).toISOString() : new Date().toISOString();
+    const id = `gw-${ts}-${m.role}-${text.substring(0, 20)}`;
+
+    addMessage(agentId, {
+      id,
+      role: m.role,
+      text: text.substring(0, 2000),
+      timestamp: ts,
+      source: 'gateway',
+    });
+  }
+
+  // Sort by timestamp
+  const history = getHistory(agentId);
+  history.sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
+  return history;
+}
+
+// ── Response Watcher — polls for agent replies after sending a message ──
+
+interface WatcherState {
+  timer: ReturnType<typeof setTimeout> | null;
+  baselineCount: number;
+  pollCount: number;
+}
+
+const activeWatchers = new Map<string, WatcherState>();
+const MAX_POLLS = 20;          // max 20 polls × 1.5s = 30s watch window
+const POLL_INTERVAL_MS = 1_500;
+
+/**
+ * After sending a message to an agent, poll their session history
+ * for a new assistant response. When found, store it and broadcast via WebSocket.
+ */
+function startResponseWatcher(
+  agentId: string,
+  sessionKey: string,
+  gatewayToken: string,
+  gatewayUrl: string,
+) {
+  // Cancel existing watcher for this agent (if any)
+  const existing = activeWatchers.get(agentId);
+  if (existing?.timer) clearTimeout(existing.timer);
+
+  const state: WatcherState = {
+    timer: null,
+    baselineCount: -1, // -1 means "first poll — establish baseline"
+    pollCount: 0,
+  };
+  activeWatchers.set(agentId, state);
+
+  async function poll() {
+    state.pollCount++;
+    if (state.pollCount > MAX_POLLS) {
+      activeWatchers.delete(agentId);
+      broadcast('chat:timeout', { agentId });
+      return;
+    }
+
+    try {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 8_000);
+
+      const res = await fetch(`${gatewayUrl}/tools/invoke`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${gatewayToken}`,
+        },
+        body: JSON.stringify({
+          tool: 'sessions_history',
+          args: { sessionKey, limit: 5, includeTools: false },
+        }),
+        signal: controller.signal,
+      });
+
+      clearTimeout(timeout);
+      if (!res.ok) {
+        state.timer = setTimeout(poll, POLL_INTERVAL_MS);
+        return;
+      }
+
+      const data = await res.json();
+      const messages: any[] =
+        data?.result?.details?.messages ??
+        data?.result?.messages ??
+        (Array.isArray(data?.result) ? data.result : []);
+
+      // Filter to assistant text messages
+      const assistantMsgs = messages.filter((m: any) => {
+        if (m.role !== 'assistant') return false;
+        if (typeof m.content === 'string') return m.content.trim().length > 0;
+        if (Array.isArray(m.content)) {
+          return m.content.some((b: any) => b.type === 'text' && b.text?.trim());
+        }
+        return !!(m.text?.trim() || m.preview?.trim());
+      });
+
+      // First poll — establish baseline
+      if (state.baselineCount === -1) {
+        state.baselineCount = assistantMsgs.length;
+        state.timer = setTimeout(poll, POLL_INTERVAL_MS);
+        return;
+      }
+
+      // Check for new assistant messages
+      if (assistantMsgs.length > state.baselineCount) {
+        const newMsgs = assistantMsgs.slice(state.baselineCount);
+
+        for (const msg of newMsgs) {
+          let text = '';
+          if (typeof msg.content === 'string') {
+            text = msg.content;
+          } else if (Array.isArray(msg.content)) {
+            const textBlock = msg.content.find((b: any) => b.type === 'text');
+            text = textBlock?.text ?? '';
+          } else {
+            text = msg.text ?? msg.preview ?? '';
+          }
+
+          if (text.trim()) {
+            const ts = msg.timestamp ? new Date(msg.timestamp).toISOString() : new Date().toISOString();
+            const stored: StoredMessage = {
+              id: `ws-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+              role: 'assistant',
+              text: text.substring(0, 2000),
+              timestamp: ts,
+              source: 'gateway',
+            };
+
+            // Store in history
+            addMessage(agentId, stored);
+
+            // Broadcast to all WebSocket clients
+            broadcast('chat:response', {
+              agentId,
+              message: stored,
+            });
+          }
+        }
+
+        // Done watching
+        activeWatchers.delete(agentId);
+        return;
+      }
+
+      // No new messages yet — keep polling
+      state.timer = setTimeout(poll, POLL_INTERVAL_MS);
+    } catch (err) {
+      console.warn(`[Watcher] Poll error for ${agentId}:`, (err as Error).message);
+      state.timer = setTimeout(poll, POLL_INTERVAL_MS);
+    }
+  }
+
+  // Start first poll after a short delay
+  state.timer = setTimeout(poll, POLL_INTERVAL_MS);
+}
+
+
+// ── Routes ──
+
 /**
  * POST /api/proxy/sessions
- * 
- * Headers:
- *   X-Gateway-Token: <user's gateway token>
- *   X-Gateway-URL: <user's gateway URL, e.g. http://127.0.0.1:18789>
- * 
- * Forwards: POST /tools/invoke { tool: "sessions_list", params: { activeMinutes, messageLimit } }
- * Returns: The Gateway's response as-is.
  */
 proxyRouter.post('/sessions', async (req: Request, res: Response) => {
   const gatewayToken = req.headers['x-gateway-token'] as string | undefined;
@@ -36,9 +252,8 @@ proxyRouter.post('/sessions', async (req: Request, res: Response) => {
   }
 
   // Validate URL format
-  let parsedUrl: URL;
   try {
-    parsedUrl = new URL(gatewayUrl);
+    const parsedUrl = new URL(gatewayUrl);
     if (!['http:', 'https:'].includes(parsedUrl.protocol)) {
       throw new Error('Invalid protocol');
     }
@@ -78,8 +293,6 @@ proxyRouter.post('/sessions', async (req: Request, res: Response) => {
     }
 
     const data = await gatewayRes.json();
-
-    // Parse sessions from Gateway's nested response format
     const sessions =
       data?.result?.details?.sessions ??
       data?.sessions ??
@@ -92,12 +305,9 @@ proxyRouter.post('/sessions', async (req: Request, res: Response) => {
       res.status(504).json({ error: `Gateway request timed out (${PROXY_TIMEOUT_MS}ms)` });
       return;
     }
-
-    // Network errors (ECONNREFUSED, DNS failures, etc.)
     const message = err.cause?.code === 'ECONNREFUSED'
       ? `Cannot connect to Gateway at ${gatewayUrl} — is it running?`
       : err.message || 'Unknown proxy error';
-
     res.status(502).json({ error: message });
   }
 });
@@ -106,7 +316,9 @@ proxyRouter.post('/sessions', async (req: Request, res: Response) => {
  * POST /api/proxy/send
  * 
  * Send a message to an agent via sessions_send.
- * Body: { sessionKey, message }
+ * Body: { sessionKey, message, agentId }
+ * 
+ * agentId is REQUIRED — used for routing validation and history storage.
  */
 proxyRouter.post('/send', async (req: Request, res: Response) => {
   const gatewayToken = req.headers['x-gateway-token'] as string | undefined;
@@ -117,10 +329,28 @@ proxyRouter.post('/send', async (req: Request, res: Response) => {
     return;
   }
 
-  const { sessionKey, message } = req.body ?? {};
+  const { sessionKey, message, agentId } = req.body ?? {};
   if (!sessionKey || !message) {
     res.status(400).json({ error: 'Missing sessionKey or message in body' });
     return;
+  }
+
+  // Routing validation — ensure sessionKey matches intended agent
+  if (agentId) {
+    const keyMatch = sessionKey.match(/^agent:([^:]+)/);
+    const keyAgentId = keyMatch ? keyMatch[1] : null;
+    // Normalize aliases: "main" ↔ "yogi"
+    const normalizedKey = keyAgentId === 'main' ? 'yogi' : keyAgentId;
+    const normalizedTarget = agentId === 'main' ? 'yogi' : agentId;
+
+    if (normalizedKey !== normalizedTarget) {
+      console.warn(`[Proxy] Routing mismatch! agentId="${agentId}" but sessionKey belongs to "${keyAgentId}". Blocking.`);
+      res.status(400).json({
+        error: `Routing mismatch: sessionKey belongs to "${keyAgentId}" but target is "${agentId}"`,
+        hint: 'The frontend may have cached a stale sessionKey. Refresh the page.',
+      });
+      return;
+    }
   }
 
   try {
@@ -152,24 +382,42 @@ proxyRouter.post('/send', async (req: Request, res: Response) => {
     }
 
     const data = await gatewayRes.json();
+
+    // Store the sent message in history
+    const effectiveAgentId = agentId ?? sessionKey.match(/^agent:([^:]+)/)?.[1] ?? 'unknown';
+    const sentMsg: StoredMessage = {
+      id: `office-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      role: 'user',
+      text: message.substring(0, 2000),
+      timestamp: new Date().toISOString(),
+      source: 'office',
+    };
+    addMessage(effectiveAgentId, sentMsg);
+
+    // Start response watcher — polls for agent's reply and broadcasts via WebSocket
+    startResponseWatcher(effectiveAgentId, sessionKey, gatewayToken, gatewayUrl);
+
     res.json({ ok: true, result: data?.result ?? data });
   } catch (err: any) {
     if (err.name === 'AbortError') {
       res.status(504).json({ error: `Gateway request timed out (${PROXY_TIMEOUT_MS}ms)` });
       return;
     }
-    const message = err.cause?.code === 'ECONNREFUSED'
+    const errMsg = err.cause?.code === 'ECONNREFUSED'
       ? `Cannot connect to Gateway at ${gatewayUrl} — is it running?`
       : err.message || 'Unknown proxy error';
-    res.status(502).json({ error: message });
+    res.status(502).json({ error: errMsg });
   }
 });
 
 /**
  * POST /api/proxy/history
  * 
- * Fetch recent message history for an agent session.
- * Body: { sessionKey, limit? }
+ * Fetch chat history for an agent. Merges:
+ * - Local office-chat messages (stored in-memory)
+ * - Gateway session history (fetched live)
+ * 
+ * Body: { sessionKey, agentId?, limit?, after? }
  */
 proxyRouter.post('/history', async (req: Request, res: Response) => {
   const gatewayToken = req.headers['x-gateway-token'] as string | undefined;
@@ -180,13 +428,16 @@ proxyRouter.post('/history', async (req: Request, res: Response) => {
     return;
   }
 
-  const { sessionKey, limit = 10 } = req.body ?? {};
+  const { sessionKey, agentId, limit = 50, after } = req.body ?? {};
   if (!sessionKey) {
     res.status(400).json({ error: 'Missing sessionKey in body' });
     return;
   }
 
+  const effectiveAgentId = agentId ?? sessionKey.match(/^agent:([^:]+)/)?.[1] ?? 'unknown';
+
   try {
+    // Fetch fresh history from Gateway
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), PROXY_TIMEOUT_MS);
 
@@ -205,34 +456,47 @@ proxyRouter.post('/history', async (req: Request, res: Response) => {
 
     clearTimeout(timeout);
 
-    if (!gatewayRes.ok) {
-      const errorText = await gatewayRes.text().catch(() => '');
-      res.status(gatewayRes.status).json({
-        error: `Gateway responded ${gatewayRes.status}`,
-        detail: errorText.substring(0, 500),
-      });
-      return;
-    }
+    if (gatewayRes.ok) {
+      const data = await gatewayRes.json();
+      const rawMessages =
+        data?.result?.details?.messages ??
+        data?.result?.messages ??
+        (Array.isArray(data?.result) ? data.result : []);
 
-    const data = await gatewayRes.json();
-    res.json({ ok: true, result: data?.result ?? data });
-  } catch (err: any) {
-    if (err.name === 'AbortError') {
-      res.status(504).json({ error: `Gateway request timed out (${PROXY_TIMEOUT_MS}ms)` });
-      return;
+      // Merge Gateway messages into local store
+      if (Array.isArray(rawMessages)) {
+        mergeGatewayHistory(effectiveAgentId, rawMessages);
+      }
     }
-    const msg = err.cause?.code === 'ECONNREFUSED'
-      ? `Cannot connect to Gateway at ${gatewayUrl} — is it running?`
-      : err.message || 'Unknown proxy error';
-    res.status(502).json({ error: msg });
+  } catch (err) {
+    // Gateway fetch failed — still return local history
+    console.warn(`[History] Gateway fetch failed for ${effectiveAgentId}:`, (err as Error).message);
   }
+
+  // Return merged history (local + gateway)
+  let history = getHistory(effectiveAgentId);
+
+  // Filter by `after` timestamp if provided
+  if (after) {
+    const afterTs = new Date(after).getTime();
+    history = history.filter(m => new Date(m.timestamp).getTime() > afterTs);
+  }
+
+  // Apply limit (from the end — most recent)
+  if (history.length > limit) {
+    history = history.slice(-limit);
+  }
+
+  res.json({
+    ok: true,
+    agentId: effectiveAgentId,
+    messages: history,
+    total: getHistory(effectiveAgentId).length,
+  });
 });
 
 /**
  * POST /api/proxy/health
- * 
- * Quick connectivity check to the user's Gateway.
- * Same headers as /sessions.
  */
 proxyRouter.post('/health', async (req: Request, res: Response) => {
   const gatewayToken = req.headers['x-gateway-token'] as string | undefined;
