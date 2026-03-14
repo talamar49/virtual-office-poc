@@ -556,14 +556,10 @@ function getZoneForState(state: AgentState): Zone {
 }
 
 // ── Lounge spots — agents sit on sofas in pairs, cozy layout ──
-// Each pair shares a sofa. Spots are close together per-pair.
-// Lounge spots — dynamically generated, enough for all agents
-// 2 columns (col 1 and col 3), spaced 3 rows apart
+// Lounge spots — single column, 3 rows apart for clear separation
 function generateLoungeSpots(count: number): [number, number][] {
   const spots: [number, number][] = []
-  // Staggered 2-column layout with enough spacing to avoid overlap
-  // Each row holds 2 agents at cols 1 and 3, spaced LOUNGE_ROWS_PER_AGENT apart
-  const cols = [1, 3]
+  const cols = [1, 3, 5] // 3 columns across lounge zone
   const rowsNeeded = Math.ceil(count / cols.length)
   for (let r = 0; r < rowsNeeded; r++) {
     for (const c of cols) {
@@ -1519,39 +1515,12 @@ function drawScene(
   }
   const drawables: Drawable[] = []
 
-  // Lounge sofas — drawn at each lounge pair position
-  for (const [sc, sr] of LOUNGE_SOFA_POSITIONS) {
-    drawables.push({ sortY: sc + sr - 0.5, draw: () => drawSofa(ctx, ox, oy, sc, sr) })
-  }
+  // (sofas removed per Tal's request)
   // Coffee area in bottom-right empty space
   drawables.push({ sortY: MAP_COLS - 4 + MAP_ROWS - 3, draw: () => drawCoffeeTable(ctx, ox, oy, MAP_COLS - 4, MAP_ROWS - 3) })
   drawables.push({ sortY: MAP_COLS - 3 + MAP_ROWS - 2, draw: () => drawCoffeeMachine(ctx, ox, oy, MAP_COLS - 3, MAP_ROWS - 2) })
 
-  for (let i = 0; i < CUBICLE_POSITIONS.length; i++) {
-    const [cc, cr] = CUBICLE_POSITIONS[i]
-    const owner = (allAgentDefs ?? DEFAULT_AGENT_DEFS).find(a => a.cubicleIndex === i)
-    drawables.push({ sortY: cc + cr, draw: () => {
-      drawIsoDeskAt(ctx, ox, oy, cc, cr, '#00E676')
-      // Draw cubicle name tag
-      if (owner) {
-        const [ix, iy] = toIso(cc, cr)
-        const sx = ox + ix
-        const sy = oy + iy
-        ctx.font = '9px "Heebo", "Segoe UI", sans-serif'
-        ctx.textAlign = 'center'
-        // Only show desk label when agent is NOT at desk (so you know whose desk it is)
-        const isAtDesk = getZoneForState(owner.state) === 'work'
-        if (!isAtDesk) {
-          ctx.fillStyle = 'rgba(255,255,255,0.2)'
-          ctx.fillText(owner.emoji + ' ' + owner.name, sx, sy + 32)
-        }
-      }
-    }})
-  }
-  for (const [bc, br] of BUG_WORKSTATIONS) {
-    drawables.push({ sortY: bc + br, draw: () => drawIsoDeskAt(ctx, ox, oy, bc, br, '#f44336') })
-  }
-  drawables.push({ sortY: 14 + 10, draw: () => drawWarningSign(ctx, ox, oy, 14, 10) })
+  // (desks, monitors, bug workstations removed per Tal's request)
 
   // Decorations (Amir's assets)
   for (const deco of decos) {
