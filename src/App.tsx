@@ -56,15 +56,15 @@ let MAP_ROWS = BASE_MAP_ROWS
  */
 // Layout constants — lounge on left, work on right
 const LOUNGE_COLS = 5        // cols 0-4 for lounge
-const WORK_START_COL = 7     // work zone starts at col 7 (gap between zones)
-const WORK_COLS_PER_AGENT = 5
+const WORK_START_COL = 6     // work zone starts at col 6 (smaller gap)
+const WORK_COLS_PER_AGENT = 3 // compact cubicles
 const WORK_ROWS_PER_AGENT = 4
-// Dynamic agents per row: aim for ~3-4 rows, adapting to agent count
+// Force at least 3 rows for visual balance
 function getWorkAgentsPerRow(agentCount: number): number {
-  if (agentCount <= 6) return 3
-  if (agentCount <= 12) return 4
-  // For 13+: ceil(sqrt) gives roughly square layout (14→4, 16→4, 20→5, 25→5)
-  return Math.min(6, Math.ceil(Math.sqrt(agentCount)))
+  if (agentCount <= 6) return 2    // 6 agents → 2×3
+  if (agentCount <= 9) return 3    // 9 agents → 3×3
+  if (agentCount <= 16) return 4   // 12-16 → 4×3 or 4×4
+  return 5                          // 17+ → 5 per row
 }
 let WORK_AGENTS_PER_ROW = 3
 const LOUNGE_ROWS_PER_AGENT = 3
@@ -72,13 +72,14 @@ const LOUNGE_ROWS_PER_AGENT = 3
 function computeGridSize(agentCount: number) {
   // Update dynamic agents-per-row based on count
   WORK_AGENTS_PER_ROW = getWorkAgentsPerRow(agentCount)
-  // Work zone: dynamic per row, 5-col spacing
+  // Work zone: rows × 4-tile spacing + margin
   const workRows = Math.ceil(agentCount / WORK_AGENTS_PER_ROW)
   const workHeight = workRows * WORK_ROWS_PER_AGENT + 3
 
-  // Lounge: 2 columns, enough rows for ALL agents (everyone has a spot)
-  const loungeRows = Math.ceil(agentCount / 2)
-  const loungeHeight = loungeRows * LOUNGE_ROWS_PER_AGENT + 2
+  // Lounge: 2 per row, estimate max ~60% idle at once
+  const maxLoungeAgents = Math.ceil(agentCount * 0.6)
+  const loungeRows = Math.ceil(maxLoungeAgents / 2)
+  const loungeHeight = loungeRows * LOUNGE_ROWS_PER_AGENT + 3
 
   MAP_ROWS = Math.max(BASE_MAP_ROWS, workHeight, loungeHeight)
   MAP_COLS = Math.max(BASE_MAP_COLS, WORK_START_COL + WORK_AGENTS_PER_ROW * WORK_COLS_PER_AGENT + 2)
@@ -165,7 +166,7 @@ function getZoneAt(col: number, row: number): Zone {
   const bugStartCol = Math.max(10, MAP_COLS - 6)
   const bugStartRow = Math.max(8, MAP_ROWS - 4)
   if (col >= bugStartCol && row >= bugStartRow) return 'bugs'
-  if (col <= 3) return 'lounge'
+  if (col < LOUNGE_COLS) return 'lounge'
   return 'work'
 }
 
@@ -239,7 +240,7 @@ function generateCubiclePositions(count: number): [number, number][] {
   const positions: [number, number][] = []
   for (let r = 0; r < rows; r++) {
     for (let c = 0; c < cols && positions.length < count; c++) {
-      positions.push([WORK_START_COL + c * WORK_COLS_PER_AGENT, 1 + r * WORK_ROWS_PER_AGENT])
+      positions.push([WORK_START_COL + c * WORK_COLS_PER_AGENT, 2 + r * WORK_ROWS_PER_AGENT])
     }
   }
   return positions
@@ -557,12 +558,14 @@ function getZoneForState(state: AgentState): Zone {
 // 2 columns (col 1 and col 3), spaced 3 rows apart
 function generateLoungeSpots(count: number): [number, number][] {
   const spots: [number, number][] = []
+  // Staggered 2-column layout with enough spacing to avoid overlap
+  // Each row holds 2 agents at cols 1 and 3, spaced LOUNGE_ROWS_PER_AGENT apart
   const cols = [1, 3]
   const rowsNeeded = Math.ceil(count / cols.length)
   for (let r = 0; r < rowsNeeded; r++) {
     for (const c of cols) {
       if (spots.length >= count) break
-      spots.push([c, 1 + r * LOUNGE_ROWS_PER_AGENT])
+      spots.push([c, 2 + r * LOUNGE_ROWS_PER_AGENT])
     }
   }
   return spots
@@ -570,13 +573,24 @@ function generateLoungeSpots(count: number): [number, number][] {
 
 let LOUNGE_SPOTS = generateLoungeSpots(12)
 // Sofa at every lounge spot
-let LOUNGE_SOFA_POSITIONS = [...LOUNGE_SPOTS]
+// Sofas positioned 1 tile offset from agent spots (so agents sit beside, not on)
+let LOUNGE_SOFA_POSITIONS = LOUNGE_SPOTS.map(([c, r]): [number, number] => [c + 1, r - 1])
 
 // ── Bug zone spots (5 unique positions) ──
 // Bug zone spots — spaced out in the larger map
-const BUG_SPOTS: [number, number][] = [
-  [15, 13], [18, 13], [15, 15], [18, 15], [17, 14],
-]
+// Bug zone spots — dynamically positioned in the bottom-right
+function generateBugSpots(): [number, number][] {
+  const bugStartCol = Math.max(10, MAP_COLS - 6) + 1
+  const bugStartRow = Math.max(8, MAP_ROWS - 4) + 1
+  return [
+    [bugStartCol, bugStartRow],
+    [bugStartCol + 3, bugStartRow],
+    [bugStartCol, bugStartRow + 2],
+    [bugStartCol + 3, bugStartRow + 2],
+    [bugStartCol + 1, bugStartRow + 1],
+  ]
+}
+let BUG_SPOTS = generateBugSpots()
 
 // Track which lounge/bug spots are taken (by agent id)
 const loungeAssignments: Map<string, number> = new Map()
@@ -629,10 +643,11 @@ function buildAgents(defs: AgentDef[]): AgentRuntime[] {
   FLOOR_MAP = generateFloorMap()
   WALLS = generateWalls()
   BUG_WORKSTATIONS = generateBugWorkstations()
+  BUG_SPOTS = generateBugSpots()
   CUBICLE_POSITIONS = generateCubiclePositions(defs.length)
   // Regenerate lounge spots — enough for ALL agents
   LOUNGE_SPOTS = generateLoungeSpots(defs.length)
-  LOUNGE_SOFA_POSITIONS = [...LOUNGE_SPOTS]
+  LOUNGE_SOFA_POSITIONS = LOUNGE_SPOTS.map(([c, r]): [number, number] => [c + 1, r - 1])
   // Reset spot assignments
   loungeAssignments.clear()
   bugAssignments.clear()
