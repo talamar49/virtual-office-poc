@@ -8,6 +8,7 @@ interface ChatMessage {
   role: 'user' | 'assistant'
   text: string
   ts: number
+  source?: string // channel source: 'discord', 'telegram', 'webchat', etc.
 }
 
 interface AgentDef {
@@ -1894,10 +1895,12 @@ export default function App() {
     _setHoverAgentId(id)
   }, [])
   const [selectedId, _setSelectedId] = useState<string | null>(null)
+  const [chatMinimized, setChatMinimized] = useState(false)
   const setSelectedId = useCallback((val: string | null | ((prev: string | null) => string | null)) => {
     _setSelectedId(prev => {
       const next = typeof val === 'function' ? val(prev) : val
       selectedIdRef.current = next
+      if (next !== prev) setChatMinimized(false) // expand when switching agents
       return next
     })
   }, [])
@@ -2046,15 +2049,26 @@ export default function App() {
         const sessions: any[] = data.sessions ?? []
         if (sessions.length === 0) return
 
-        // Group sessions by agent, keeping the most recent per agent
+        // Group sessions by agent, preferring listenable sessions (main/webchat)
         const agentSessions = new Map<string, any>()
+        const SESSION_KIND_PRIORITY: Record<string, number> = { main: 3, webchat: 2, discord: 1 }
         for (const session of sessions) {
           const keyParts = (session.key || '').split(':')
           const rawId = keyParts[1] || 'unknown'
           const agentId = rawId
+          const kind = session.kind || keyParts[2] || ''
           const existing = agentSessions.get(agentId)
-          if (!existing || (session.updatedAt ?? 0) > (existing.updatedAt ?? 0)) {
+          if (!existing) {
             agentSessions.set(agentId, session)
+          } else {
+            const existingKind = existing.kind || (existing.key || '').split(':')[2] || ''
+            const newPriority = SESSION_KIND_PRIORITY[kind] ?? 0
+            const existingPriority = SESSION_KIND_PRIORITY[existingKind] ?? 0
+            // Prefer higher-priority session kind; if same priority, take most recent
+            if (newPriority > existingPriority ||
+                (newPriority === existingPriority && (session.updatedAt ?? 0) > (existing.updatedAt ?? 0))) {
+              agentSessions.set(agentId, session)
+            }
           }
         }
 
@@ -2650,11 +2664,14 @@ export default function App() {
     addChatBubble(agentId, message)
   }, [gatewayToken, gatewayUrl, getBackendBase])
 
-  // Fetch chat history for an agent
-  const handleFetchHistory = useCallback(async (agentId: string): Promise<ChatMessage[]> => {
+  // Fetch chat history for an agent (pass `after` timestamp to get only newer messages)
+  const handleFetchHistory = useCallback(async (agentId: string, after?: number): Promise<ChatMessage[]> => {
     const agent = agentDefsRef.current.find(a => a.id === agentId)
     const sessionKey = agent?.sessionKey
     if (!sessionKey) return []
+
+    const body: any = { sessionKey, limit: 30 }
+    if (after) body.after = new Date(after).toISOString()
 
     const res = await fetch(`${getBackendBase()}/api/proxy/history`, {
       method: 'POST',
@@ -2663,7 +2680,7 @@ export default function App() {
         'X-Gateway-URL': gatewayUrl,
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify({ sessionKey, limit: 10 }),
+      body: JSON.stringify(body),
     })
     if (!res.ok) return []
 
@@ -2683,6 +2700,7 @@ export default function App() {
         role: m.role as 'user' | 'assistant',
         text: (m.content || m.text || m.preview || '').substring(0, 500),
         ts: m.timestamp ? new Date(m.timestamp).getTime() : Date.now() - (history.length - i) * 1000,
+        source: m.channel || m.source || undefined,
       }))
       .filter((m: ChatMessage) => m.text.length > 0)
   }, [gatewayToken, gatewayUrl, getBackendBase])
@@ -3009,8 +3027,9 @@ export default function App() {
           position: 'fixed',
           bottom: isCompact ? 32 : 40,
           left: 8, right: 8,
-          maxHeight: isCompact ? '45vh' : '50vh',
-          overflowY: 'auto',
+          maxHeight: chatMinimized ? 52 : (isCompact ? '45vh' : '50vh'),
+          overflowY: chatMinimized ? 'hidden' : 'auto',
+          transition: 'max-height 0.3s ease',
           background: '#16162b',
           border: `2px solid ${STATE_META[selectedAgent.state].color}`,
           borderRadius: 0,
@@ -3027,14 +3046,24 @@ export default function App() {
           boxShadow: 'inset -2px -2px 0 #0a0a1a, inset 2px 2px 0 #2a2a4a, 0 8px 32px rgba(0,0,0,0.5)',
           fontFamily: '"Press Start 2P", cursive',
         }}>
-          <button onClick={() => setSelectedId(null)} style={{
-            position: 'absolute', top: 8, left: 8, background: 'none',
-            border: 'none', color: '#888', fontSize: isMobile ? 24 : 18, cursor: 'pointer',
-            padding: isMobile ? 8 : 0,
-            // Accessible touch target
-            minWidth: isMobile ? 44 : undefined,
-            minHeight: isMobile ? 44 : undefined,
-          }}>✕</button>
+          <div style={{ position: 'absolute', top: 8, left: 8, display: 'flex', gap: 4 }}>
+            {isMobile && (
+              <button onClick={() => setChatMinimized(m => !m)} style={{
+                background: 'none', border: 'none', color: '#888',
+                fontSize: isMobile ? 20 : 16, cursor: 'pointer',
+                padding: isMobile ? 8 : 0,
+                minWidth: isMobile ? 44 : undefined,
+                minHeight: isMobile ? 44 : undefined,
+              }}>{chatMinimized ? '▲' : '▼'}</button>
+            )}
+            <button onClick={() => setSelectedId(null)} style={{
+              background: 'none', border: 'none', color: '#888',
+              fontSize: isMobile ? 24 : 18, cursor: 'pointer',
+              padding: isMobile ? 8 : 0,
+              minWidth: isMobile ? 44 : undefined,
+              minHeight: isMobile ? 44 : undefined,
+            }}>✕</button>
+          </div>
 
           {isCompact ? (
             // Compact layout — horizontal header
@@ -3175,12 +3204,119 @@ function ExpandableTask({ task, hasRealTask, compact }: {
 
 type SendStatus = 'idle' | 'sending' | 'sent' | 'error'
 
+// Module-level chat cache — persists across agent switches and component unmounts
+const globalChatCache: Record<string, ChatMessage[]> = {}
+
+/** Source channel icon for chat messages */
+function sourceIcon(source?: string): string {
+  if (!source) return ''
+  const s = source.toLowerCase()
+  if (s.includes('discord')) return '💬'
+  if (s.includes('telegram')) return '✈️'
+  if (s.includes('whatsapp')) return '📱'
+  if (s.includes('webchat')) return '🌐'
+  if (s.includes('signal')) return '🔒'
+  return '📨'
+}
+
+/** Markdown renderer: **bold**, *italic*, `code`, ```blocks```, [links](url), # headers, - lists */
+function renderMarkdown(text: string): React.ReactNode[] {
+  const nodes: React.ReactNode[] = []
+  let key = 0
+
+  // Split into code blocks vs rest
+  const blocks = text.split(/(```[\s\S]*?```)/)
+  for (const block of blocks) {
+    if (!block) continue
+    if (block.startsWith('```') && block.endsWith('```')) {
+      const code = block.slice(3, -3).replace(/^\w*\n/, '')
+      nodes.push(<pre key={key++} style={{ background: 'rgba(0,0,0,0.3)', borderRadius: 6, padding: 8, margin: '4px 0', fontSize: 12, overflowX: 'auto', whiteSpace: 'pre-wrap', fontFamily: 'monospace', direction: 'ltr', textAlign: 'left' }}><code>{code}</code></pre>)
+      continue
+    }
+    // Process line by line for headers and lists
+    const lines = block.split('\n')
+    let listItems: React.ReactNode[] = []
+    let numberedItems: React.ReactNode[] = []
+    const flushList = () => {
+      if (listItems.length > 0) {
+        nodes.push(<ul key={key++} style={{ margin: '4px 0', paddingRight: 16, paddingLeft: 0, listStyle: 'disc' }}>{listItems}</ul>)
+        listItems = []
+      }
+      if (numberedItems.length > 0) {
+        nodes.push(<ol key={key++} style={{ margin: '4px 0', paddingRight: 16, paddingLeft: 0 }}>{numberedItems}</ol>)
+        numberedItems = []
+      }
+    }
+    for (const line of lines) {
+      // Headers
+      if (line.match(/^#{1,3}\s/)) {
+        flushList()
+        const level = line.match(/^(#{1,3})\s/)![1].length
+        const hText = line.replace(/^#{1,3}\s/, '')
+        const fontSize = level === 1 ? 16 : level === 2 ? 14 : 13
+        nodes.push(<div key={key++} style={{ fontSize, fontWeight: 700, margin: '6px 0 2px' }}>{renderInline(hText, key++)}</div>)
+        continue
+      }
+      // Bullet list items
+      if (line.match(/^[-*]\s/)) {
+        if (numberedItems.length > 0) flushList()
+        listItems.push(<li key={key++} style={{ fontSize: 13, lineHeight: 1.5 }}>{renderInline(line.replace(/^[-*]\s/, ''), key++)}</li>)
+        continue
+      }
+      // Numbered list
+      if (line.match(/^\d+\.\s/)) {
+        if (listItems.length > 0) flushList()
+        numberedItems.push(<li key={key++} style={{ fontSize: 13, lineHeight: 1.5 }}>{renderInline(line.replace(/^\d+\.\s/, ''), key++)}</li>)
+        continue
+      }
+      // Normal line
+      flushList()
+      if (line.trim()) {
+        nodes.push(<div key={key++} style={{ lineHeight: 1.5 }}>{renderInline(line, key++)}</div>)
+      } else if (nodes.length > 0) {
+        // Empty line = line break
+        nodes.push(<br key={key++} />)
+      }
+    }
+    flushList()
+  }
+  return nodes
+}
+
+/** Inline markdown: **bold**, *italic*, `code`, [links](url) */
+function renderInline(text: string, baseKey: number): React.ReactNode[] {
+  const nodes: React.ReactNode[] = []
+  const parts = text.split(/(`[^`]+`|\*\*[^*]+\*\*|\*[^*]+\*|\[([^\]]+)\]\(([^)]+)\))/)
+  let k = baseKey * 100
+  for (const part of parts) {
+    if (!part) continue
+    if (part.startsWith('`') && part.endsWith('`')) {
+      nodes.push(<code key={k++} style={{ background: 'rgba(0,0,0,0.3)', padding: '1px 4px', borderRadius: 3, fontSize: 12, fontFamily: 'monospace' }}>{part.slice(1, -1)}</code>)
+    } else if (part.startsWith('**') && part.endsWith('**')) {
+      nodes.push(<strong key={k++}>{part.slice(2, -2)}</strong>)
+    } else if (part.startsWith('*') && part.endsWith('*') && !part.startsWith('**')) {
+      nodes.push(<em key={k++}>{part.slice(1, -1)}</em>)
+    } else if (part.match(/^\[([^\]]+)\]\(([^)]+)\)$/)) {
+      const m = part.match(/^\[([^\]]+)\]\(([^)]+)\)$/)!
+      nodes.push(<a key={k++} href={m[2]} target="_blank" rel="noopener" style={{ color: '#64b5f6', textDecoration: 'underline' }}>{m[1]}</a>)
+    } else {
+      nodes.push(<span key={k++}>{part}</span>)
+    }
+  }
+  return nodes
+}
+
+function formatTime(ts: number): string {
+  const d = new Date(ts)
+  return d.toLocaleTimeString('he-IL', { hour: '2-digit', minute: '2-digit' })
+}
+
 function ChatInput({ agentId, agentColor, compact, onSend, onFetchHistory }: {
   agentId: string
   agentColor: string
   compact?: boolean
   onSend?: (agentId: string, message: string) => Promise<void> | void
-  onFetchHistory?: (agentId: string) => Promise<ChatMessage[]>
+  onFetchHistory?: (agentId: string, after?: number) => Promise<ChatMessage[]>
 }) {
   const [text, setText] = useState('')
   const [status, setStatus] = useState<SendStatus>('idle')
@@ -3190,22 +3326,24 @@ function ChatInput({ agentId, agentColor, compact, onSend, onFetchHistory }: {
   const scrollRef = useRef<HTMLDivElement>(null)
   const pollTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const prevAgentIdRef = useRef(agentId)
+  const messagesRef = useRef<ChatMessage[]>(messages)
+  messagesRef.current = messages
 
-  const chatCacheRef = useRef<Record<string, ChatMessage[]>>({})
+  // Using module-level globalChatCache for persistence across unmounts
 
   // Load history when agent changes — from cache first, then fetch
   useEffect(() => {
     if (prevAgentIdRef.current !== agentId) {
       if (pollTimerRef.current) clearTimeout(pollTimerRef.current)
       // Load from cache immediately
-      setMessages(chatCacheRef.current[agentId] || [])
+      setMessages(globalChatCache[agentId] || [])
       prevAgentIdRef.current = agentId
     }
     // Always fetch fresh history on mount/switch
     if (onFetchHistory) {
       onFetchHistory(agentId).then(history => {
         if (history.length > 0) {
-          chatCacheRef.current[agentId] = history
+          globalChatCache[agentId] = history
           setMessages(history)
         }
       }).catch(() => {})
@@ -3224,18 +3362,31 @@ function ChatInput({ agentId, agentColor, compact, onSend, onFetchHistory }: {
     }
   }, [messages])
 
-  // Continuous polling while panel is open — refresh every 5s
+  // Continuous polling while panel is open — pass `after` to fetch only newer messages
   useEffect(() => {
     if (!onFetchHistory) return
     const interval = setInterval(async () => {
       try {
-        const history = await onFetchHistory(agentId)
+        const current = messagesRef.current
+        const lastTs = current.length > 0 ? current[current.length - 1].ts : undefined
+        const history = await onFetchHistory(agentId, lastTs)
         if (history.length > 0) {
-          chatCacheRef.current[agentId] = history
-          setMessages(history)
-          // Stop "waiting" indicator if we got a new assistant msg
-          const lastMsg = history[history.length - 1]
-          if (lastMsg?.role === 'assistant') setPolling(false)
+          if (lastTs) {
+            // Merge only genuinely new messages (avoid stale duplicates)
+            const existingIds = new Set(current.map(m => m.id))
+            const newMsgs = history.filter(m => !existingIds.has(m.id) && m.ts > lastTs)
+            if (newMsgs.length > 0) {
+              const merged = [...current, ...newMsgs]
+              globalChatCache[agentId] = merged
+              setMessages(merged)
+              if (newMsgs[newMsgs.length - 1]?.role === 'assistant') setPolling(false)
+            }
+          } else {
+            globalChatCache[agentId] = history
+            setMessages(history)
+            const lastMsg = history[history.length - 1]
+            if (lastMsg?.role === 'assistant') setPolling(false)
+          }
         }
       } catch {}
     }, 5000)
@@ -3258,7 +3409,7 @@ function ChatInput({ agentId, agentColor, compact, onSend, onFetchHistory }: {
       }
       setMessages(prev => {
         const next = [...prev, sentMsg]
-        chatCacheRef.current[agentId] = next
+        globalChatCache[agentId] = next
         return next
       })
       setText('')
@@ -3303,34 +3454,42 @@ function ChatInput({ agentId, agentColor, compact, onSend, onFetchHistory }: {
           }}
         >
           {messages.map(msg => (
-            <div
-              key={msg.id}
-              style={{
-                alignSelf: msg.role === 'user' ? 'flex-start' : 'flex-end',
-                maxWidth: '85%',
-                padding: '8px 12px',
-                borderRadius: 0,
-                background: msg.role === 'user'
-                  ? 'rgba(255,255,255,0.08)'
-                  : `${agentColor}22`,
-                border: msg.role === 'assistant'
-                  ? `2px solid ${agentColor}44`
-                  : '2px solid rgba(255,255,255,0.06)',
-                fontSize: compact ? 7 : 8,
-                fontFamily: '"Press Start 2P", cursive',
-                boxShadow: 'inset -1px -1px 0 #0a0a1a, inset 1px 1px 0 #2a2a4a',
-                lineHeight: 1.5,
-                color: '#eee',
-                animation: 'chatFadeIn 0.3s ease-out',
-                wordBreak: 'break-word',
-              }}
-            >
-              {msg.role === 'assistant' && (
-                <div style={{ fontSize: 6, color: agentColor, marginBottom: 2, fontWeight: 600 }}>
-                  תגובה
-                </div>
-              )}
-              {msg.text}
+            <div key={msg.id} style={{ alignSelf: msg.role === 'user' ? 'flex-start' : 'flex-end', maxWidth: '85%' }}>
+              <div
+                style={{
+                  padding: '8px 12px',
+                  borderRadius: msg.role === 'user' ? '12px 12px 4px 12px' : '12px 12px 12px 4px',
+                  background: msg.role === 'user'
+                    ? 'rgba(60, 60, 120, 0.5)'
+                    : `${agentColor}22`,
+                  border: msg.role === 'assistant'
+                    ? `1px solid ${agentColor}33`
+                    : '1px solid rgba(80,80,150,0.3)',
+                  fontSize: compact ? 12 : 13,
+                  fontFamily: '"Heebo", sans-serif',
+                  lineHeight: 1.6,
+                  color: '#e0e0e0',
+                  animation: 'chatFadeIn 0.3s ease-out',
+                  wordBreak: 'break-word',
+                }}
+              >
+                {msg.role === 'assistant' && (
+                  <div style={{ fontSize: 10, color: agentColor, marginBottom: 2, fontWeight: 600 }}>
+                    תגובה
+                  </div>
+                )}
+                {renderMarkdown(msg.text)}
+              </div>
+              <div style={{
+                fontSize: 9, color: '#555', marginTop: 1,
+                textAlign: msg.role === 'user' ? 'left' : 'right',
+                padding: '0 4px',
+                display: 'flex', gap: 3, alignItems: 'center',
+                justifyContent: msg.role === 'user' ? 'flex-start' : 'flex-end',
+              }}>
+                {msg.source && <span title={msg.source} style={{ fontSize: 8 }}>{sourceIcon(msg.source)}</span>}
+                <span>{msg.ts ? formatTime(msg.ts) : ''}</span>
+              </div>
             </div>
           ))}
           {polling && (
