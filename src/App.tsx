@@ -2623,7 +2623,7 @@ export default function App() {
         'X-Gateway-URL': gatewayUrl,
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify({ sessionKey, message }),
+      body: JSON.stringify({ sessionKey, message, agentId }),
     })
     if (!res.ok) {
       const err = await res.json().catch(() => ({}))
@@ -2639,7 +2639,7 @@ export default function App() {
     const sessionKey = agent?.sessionKey
     if (!sessionKey) return []
 
-    const body: any = { sessionKey, limit: 30 }
+    const body: any = { sessionKey, agentId, limit: 50 }
     if (after) body.after = new Date(after).toISOString()
 
     const res = await fetch(`${getBackendBase()}/api/proxy/history`, {
@@ -2654,20 +2654,17 @@ export default function App() {
     if (!res.ok) return []
 
     const data = await res.json()
-    // Parse Gateway history response into ChatMessage[]
-    const history = data?.result?.details?.messages
-      ?? data?.result?.messages
-      ?? data?.result
-      ?? []
+    // v2: backend returns { ok, agentId, messages: StoredMessage[], total }
+    const history = data?.messages ?? data?.result?.messages ?? data?.result ?? []
 
     if (!Array.isArray(history)) return []
 
     return history
       .filter((m: any) => m.role === 'user' || m.role === 'assistant')
       .map((m: any, i: number) => ({
-        id: `hist-${i}-${m.timestamp || i}`,
+        id: m.id || `hist-${i}-${m.timestamp || i}`,
         role: m.role as 'user' | 'assistant',
-        text: (m.content || m.text || m.preview || '').substring(0, 500),
+        text: (m.text || m.content || m.preview || '').substring(0, 2000),
         ts: m.timestamp ? new Date(m.timestamp).getTime() : Date.now() - (history.length - i) * 1000,
         source: m.channel || m.source || undefined,
       }))
@@ -2701,6 +2698,14 @@ export default function App() {
         }
         @keyframes chatSpin {
           to { transform: rotate(360deg); }
+        }
+        @keyframes chatBounce {
+          0%, 60%, 100% { transform: translateY(0); opacity: 0.4; }
+          30% { transform: translateY(-4px); opacity: 1; }
+        }
+        @keyframes chatBlink {
+          0%, 100% { opacity: 1; }
+          50% { opacity: 0; }
         }
       `}</style>
       {/* Loading overlay */}
@@ -2990,107 +2995,56 @@ export default function App() {
         ))}
       </div>
 
-      {/* Detail panel — responsive: bottom sheet (mobile) / side panel (desktop) */}
+      {/* Detail panel — chat-focused, compact header */}
       {selectedAgent && (
-        <div style={isMobile ? {
-          position: 'fixed',
-          bottom: isCompact ? 32 : 40,
-          left: 8, right: 8,
-          maxHeight: chatMinimized ? 52 : (isCompact ? '45vh' : '50vh'),
-          overflowY: chatMinimized ? 'hidden' : 'auto',
-          transition: 'max-height 0.3s ease',
-          background: '#16162b',
-          border: `2px solid ${STATE_META[selectedAgent.state].color}`,
-          borderRadius: 0,
-          padding: isCompact ? 14 : 20,
+        <div style={{
+          position: isMobile ? 'fixed' : 'absolute',
+          ...(isMobile ? { bottom: isCompact ? 32 : 40, left: 0, right: 0, height: '50vh' }
+            : { top: 10, right: 10, bottom: 10, width: breakpoint === 'tablet' ? 300 : 340 }),
+          display: 'flex', flexDirection: 'column',
+          background: '#12152a',
+          border: `1px solid ${STATE_META[selectedAgent.state].color}44`,
+          borderRadius: 12,
           color: '#e0e0e0', direction: 'rtl',
-          boxShadow: 'inset -2px -2px 0 #0a0a1a, inset 2px 2px 0 #2a2a4a, 0 -8px 32px rgba(0,0,0,0.5)',
-          zIndex: 10, fontFamily: '"Press Start 2P", cursive',
-        } : {
-          position: 'absolute', top: 20, right: 20,
-          width: breakpoint === 'tablet' ? 260 : 280,
-          background: '#16162b',
-          border: `2px solid ${STATE_META[selectedAgent.state].color}`,
-          borderRadius: 0, padding: 20, color: '#e0e0e0', direction: 'rtl',
-          boxShadow: 'inset -2px -2px 0 #0a0a1a, inset 2px 2px 0 #2a2a4a, 0 8px 32px rgba(0,0,0,0.5)',
-          fontFamily: '"Press Start 2P", cursive',
+          boxShadow: '0 8px 32px rgba(0,0,0,0.6)',
+          zIndex: 10, fontFamily: '"Heebo", sans-serif',
+          overflow: 'hidden',
         }}>
-          <div style={{ position: 'absolute', top: 8, left: 8, display: 'flex', gap: 4 }}>
-            {isMobile && (
-              <button onClick={() => setChatMinimized(m => !m)} style={{
-                background: 'none', border: 'none', color: '#888',
-                fontSize: isMobile ? 20 : 16, cursor: 'pointer',
-                padding: isMobile ? 8 : 0,
-                minWidth: isMobile ? 44 : undefined,
-                minHeight: isMobile ? 44 : undefined,
-              }}>{chatMinimized ? '▲' : '▼'}</button>
-            )}
+          {/* Compact header — emoji + name + status + zone + close */}
+          <div style={{
+            display: 'flex', alignItems: 'center', gap: 10,
+            padding: '10px 14px',
+            background: 'rgba(255,255,255,0.03)',
+            borderBottom: `1px solid ${STATE_META[selectedAgent.state].color}33`,
+            flexShrink: 0,
+          }}>
+            <span style={{ fontSize: 28 }}>{selectedAgent.emoji}</span>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                <span style={{ fontSize: 14, fontWeight: 600 }}>{selectedAgent.name}</span>
+                <span style={{
+                  fontSize: 10, padding: '2px 6px', borderRadius: 8,
+                  background: `${STATE_META[selectedAgent.state].color}22`,
+                  color: STATE_META[selectedAgent.state].color,
+                }}>
+                  {STATE_META[selectedAgent.state].dot} {STATE_META[selectedAgent.state].label}
+                </span>
+              </div>
+              <div style={{ fontSize: 11, color: '#888', display: 'flex', gap: 8, marginTop: 2 }}>
+                <span>{getZoneForState(selectedAgent.state) === 'work' ? '💻 עבודה'
+                  : getZoneForState(selectedAgent.state) === 'bugs' ? '🐛 באגים' : '☕ מנוחה'}</span>
+                {selectedAgent.lastUpdated && <span>🕐 {timeAgo(selectedAgent.lastUpdated)}</span>}
+              </div>
+            </div>
             <button onClick={() => setSelectedId(null)} style={{
               background: 'none', border: 'none', color: '#888',
-              fontSize: isMobile ? 24 : 18, cursor: 'pointer',
-              padding: isMobile ? 8 : 0,
-              minWidth: isMobile ? 44 : undefined,
-              minHeight: isMobile ? 44 : undefined,
+              fontSize: 20, cursor: 'pointer', padding: 8,
+              minWidth: 40, minHeight: 40,
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
             }}>✕</button>
           </div>
 
-          {isCompact ? (
-            // Compact layout — horizontal header
-            <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 12 }}>
-              <span style={{ fontSize: 32 }}>{selectedAgent.emoji}</span>
-              <div>
-                <h2 style={{ fontSize: 10, margin: 0, fontWeight: 600 }}>{selectedAgent.name}</h2>
-                <p style={{ fontSize: 7, color: '#7a7aaa', margin: 0 }}>{selectedAgent.role}</p>
-              </div>
-              <span style={{
-                marginRight: 'auto', color: STATE_META[selectedAgent.state].color, fontWeight: 600, fontSize: 8,
-              }}>
-                {STATE_META[selectedAgent.state].dot} {STATE_META[selectedAgent.state].label}
-              </span>
-            </div>
-          ) : (
-            <>
-              <div style={{ fontSize: isMobile ? 48 : 40, textAlign: 'center', marginBottom: 8 }}>{selectedAgent.emoji}</div>
-              <h2 style={{ fontSize: isMobile ? 12 : 11, textAlign: 'center', margin: '0 0 4px', fontWeight: 600 }}>{selectedAgent.name}</h2>
-              <p style={{ fontSize: isMobile ? 8 : 7, color: '#7a7aaa', textAlign: 'center', marginBottom: 16 }}>{selectedAgent.role}</p>
-
-              <InfoBox label="סטטוס">
-                <span style={{ color: STATE_META[selectedAgent.state].color, fontWeight: 600 }}>
-                  {STATE_META[selectedAgent.state].dot} {STATE_META[selectedAgent.state].label}
-                </span>
-              </InfoBox>
-            </>
-          )}
-
-          <ExpandableTask
-            task={selectedAgent.task || TASK_FALLBACKS[selectedAgent.state] || '⏳ ממתין למשימה'}
-            hasRealTask={!!selectedAgent.task}
-            compact={isCompact}
-          />
-
-          {selectedAgent.lastUpdated && (
-            <InfoBox label="עדכון אחרון">
-              <span style={{ fontSize: isCompact ? 12 : 13, color: '#aaa' }}>
-                🕐 {timeAgo(selectedAgent.lastUpdated)}
-              </span>
-            </InfoBox>
-          )}
-
-          <InfoBox label="אזור">
-            <span style={{ fontSize: isCompact ? 12 : 13 }}>
-              {getZoneForState(selectedAgent.state) === 'work' ? '💻 Work Zone'
-                : getZoneForState(selectedAgent.state) === 'bugs' ? '🐛 Bug Zone'
-                : '☕ Lounge'}
-            </span>
-          </InfoBox>
-
-          {!isCompact && (
-            <InfoBox label="מזהה">
-              <code style={{ fontSize: 12, color: '#7B68EE' }}>agent:{selectedAgent.id}</code>
-            </InfoBox>
-          )}
-
-          {/* Chat — bidirectional messaging */}
+          {/* Chat takes all remaining space */}
           <ChatInput
             agentId={selectedAgent.id}
             agentColor={STATE_META[selectedAgent.state].color}
@@ -3291,24 +3245,16 @@ function ChatInput({ agentId, agentColor, compact, onSend, onFetchHistory }: {
   const [status, setStatus] = useState<SendStatus>('idle')
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [polling, setPolling] = useState(false)
-  const inputRef = useRef<HTMLInputElement>(null)
+  const [streamText, setStreamText] = useState('')
+  const inputRef = useRef<HTMLTextAreaElement>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
-  const pollTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
-  const prevAgentIdRef = useRef(agentId)
   const messagesRef = useRef<ChatMessage[]>(messages)
   messagesRef.current = messages
 
-  // Using module-level globalChatCache for persistence across unmounts
-
-  // Load history when agent changes — from cache first, then fetch
+  // Load history when agent changes
   useEffect(() => {
-    if (prevAgentIdRef.current !== agentId) {
-      if (pollTimerRef.current) clearTimeout(pollTimerRef.current)
-      // Load from cache immediately
-      setMessages(globalChatCache[agentId] || [])
-      prevAgentIdRef.current = agentId
-    }
-    // Always fetch fresh history on mount/switch
+    setMessages(globalChatCache[agentId] || [])
+    setStreamText('')
     if (onFetchHistory) {
       onFetchHistory(agentId).then(history => {
         if (history.length > 0) {
@@ -3319,19 +3265,65 @@ function ChatInput({ agentId, agentColor, compact, onSend, onFetchHistory }: {
     }
   }, [agentId, onFetchHistory])
 
-  // Cleanup polling on unmount
+  // Auto-scroll to bottom
   useEffect(() => {
-    return () => { if (pollTimerRef.current) clearTimeout(pollTimerRef.current) }
-  }, [])
+    if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight
+  }, [messages, streamText])
 
-  // Auto-scroll to bottom when messages change
+  // WebSocket listener for streaming responses from backend watcher
   useEffect(() => {
-    if (scrollRef.current) {
-      scrollRef.current.scrollTop = scrollRef.current.scrollHeight
+    const wsBase = window.location.port === '5173'
+      ? 'ws://localhost:3001'
+      : `ws://${window.location.host}`
+    let ws: WebSocket | null = null
+    let reconnectTimer: ReturnType<typeof setTimeout> | null = null
+
+    function connect() {
+      ws = new WebSocket(`${wsBase}/ws`)
+      ws.onmessage = (event) => {
+        try {
+          const data = JSON.parse(event.data)
+          if (data.type === 'chat:response' && data.data?.agentId === agentId) {
+            const msg = data.data.message
+            if (msg?.text) {
+              const newMsg: ChatMessage = {
+                id: msg.id || `ws-${Date.now()}`,
+                role: 'assistant',
+                text: msg.text.substring(0, 2000),
+                ts: msg.timestamp ? new Date(msg.timestamp).getTime() : Date.now(),
+              }
+              setMessages(prev => {
+                // Deduplicate
+                if (prev.some(m => m.id === newMsg.id || (m.role === 'assistant' && m.text === newMsg.text))) return prev
+                const next = [...prev, newMsg]
+                globalChatCache[agentId] = next
+                return next
+              })
+              setPolling(false)
+            }
+          }
+          if (data.type === 'chat:timeout' && data.data?.agentId === agentId) {
+            setPolling(false)
+          }
+        } catch { /* ignore */ }
+      }
+      ws.onclose = () => {
+        reconnectTimer = setTimeout(connect, 3000)
+      }
+      ws.onerror = () => { /* onclose will fire */ }
     }
-  }, [messages])
 
-  // Continuous polling while panel is open — pass `after` to fetch only newer messages
+    connect()
+
+    return () => {
+      if (reconnectTimer) clearTimeout(reconnectTimer)
+      if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) {
+        ws.close()
+      }
+    }
+  }, [agentId])
+
+  // Poll every 5s for new messages
   useEffect(() => {
     if (!onFetchHistory) return
     const interval = setInterval(async () => {
@@ -3341,20 +3333,24 @@ function ChatInput({ agentId, agentColor, compact, onSend, onFetchHistory }: {
         const history = await onFetchHistory(agentId, lastTs)
         if (history.length > 0) {
           if (lastTs) {
-            // Merge only genuinely new messages (avoid stale duplicates)
             const existingIds = new Set(current.map(m => m.id))
             const newMsgs = history.filter(m => !existingIds.has(m.id) && m.ts > lastTs)
             if (newMsgs.length > 0) {
               const merged = [...current, ...newMsgs]
               globalChatCache[agentId] = merged
               setMessages(merged)
-              if (newMsgs[newMsgs.length - 1]?.role === 'assistant') setPolling(false)
+              if (newMsgs[newMsgs.length - 1]?.role === 'assistant') {
+                setPolling(false)
+                setStreamText('')
+              }
             }
           } else {
             globalChatCache[agentId] = history
             setMessages(history)
-            const lastMsg = history[history.length - 1]
-            if (lastMsg?.role === 'assistant') setPolling(false)
+            if (history[history.length - 1]?.role === 'assistant') {
+              setPolling(false)
+              setStreamText('')
+            }
           }
         }
       } catch {}
@@ -3365,25 +3361,15 @@ function ChatInput({ agentId, agentColor, compact, onSend, onFetchHistory }: {
   const handleSend = useCallback(async () => {
     const msg = text.trim()
     if (!msg || status === 'sending') return
-
     setStatus('sending')
     try {
       await onSend?.(agentId, msg)
-      // Add sent message to local state immediately
-      const sentMsg: ChatMessage = {
-        id: `local-${Date.now()}`,
-        role: 'user',
-        text: msg,
-        ts: Date.now(),
-      }
-      setMessages(prev => {
-        const next = [...prev, sentMsg]
-        globalChatCache[agentId] = next
-        return next
-      })
+      const sentMsg: ChatMessage = { id: `local-${Date.now()}`, role: 'user', text: msg, ts: Date.now() }
+      setMessages(prev => { const next = [...prev, sentMsg]; globalChatCache[agentId] = next; return next })
       setText('')
+      setStreamText('')
       setStatus('sent')
-      setPolling(true) // Show "waiting" indicator — continuous polling will clear it
+      setPolling(true)
       setTimeout(() => setStatus('idle'), 1200)
     } catch {
       setStatus('error')
@@ -3392,204 +3378,135 @@ function ChatInput({ agentId, agentColor, compact, onSend, onFetchHistory }: {
   }, [text, status, agentId, onSend])
 
   const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
-    if (e.key === 'Enter' && !e.shiftKey) {
-      e.preventDefault()
-      handleSend()
-    }
+    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSend() }
   }, [handleSend])
-
-  const inputHeight = compact ? 36 : 44
-  const fontSize = compact ? 13 : 14
 
   return (
     <div style={{
-      marginTop: 12,
-      borderTop: '1px solid rgba(255,255,255,0.08)',
-      paddingTop: 12,
+      display: 'flex', flexDirection: 'column',
+      flex: 1, minHeight: 0,
+      fontFamily: '"Heebo", sans-serif',
       direction: 'rtl',
     }}>
-      {/* Chat messages */}
-      {messages.length > 0 && (
-        <div
-          ref={scrollRef}
-          style={{
-            maxHeight: compact ? 120 : 180,
-            overflowY: 'auto',
-            marginBottom: 10,
-            display: 'flex',
-            flexDirection: 'column',
-            gap: 6,
-            scrollBehavior: 'smooth',
-          }}
-        >
-          {messages.map(msg => (
-            <div key={msg.id} style={{ alignSelf: msg.role === 'user' ? 'flex-start' : 'flex-end', maxWidth: '85%' }}>
-              <div
-                style={{
-                  padding: '8px 12px',
-                  borderRadius: msg.role === 'user' ? '12px 12px 4px 12px' : '12px 12px 12px 4px',
-                  background: msg.role === 'user'
-                    ? 'rgba(60, 60, 120, 0.5)'
-                    : `${agentColor}22`,
-                  border: msg.role === 'assistant'
-                    ? `1px solid ${agentColor}33`
-                    : '1px solid rgba(80,80,150,0.3)',
-                  fontSize: compact ? 12 : 13,
-                  fontFamily: '"Heebo", sans-serif',
-                  lineHeight: 1.6,
-                  color: '#e0e0e0',
-                  animation: 'chatFadeIn 0.3s ease-out',
-                  wordBreak: 'break-word',
-                }}
-              >
-                {msg.role === 'assistant' && (
-                  <div style={{ fontSize: 10, color: agentColor, marginBottom: 2, fontWeight: 600 }}>
-                    תגובה
-                  </div>
-                )}
-                {renderMarkdown(msg.text)}
-              </div>
-              <div style={{
-                fontSize: 9, color: '#555', marginTop: 1,
-                textAlign: msg.role === 'user' ? 'left' : 'right',
-                padding: '0 4px',
-                display: 'flex', gap: 3, alignItems: 'center',
-                justifyContent: msg.role === 'user' ? 'flex-start' : 'flex-end',
-              }}>
-                {msg.source && <span title={msg.source} style={{ fontSize: 8 }}>{sourceIcon(msg.source)}</span>}
-                <span>{msg.ts ? formatTime(msg.ts) : ''}</span>
-              </div>
-            </div>
-          ))}
-          {polling && (
-            <div style={{
-              alignSelf: 'flex-end',
-              padding: '8px 16px',
-              borderRadius: 0,
-              background: `${agentColor}11`,
-              border: `2px solid ${agentColor}33`,
-              fontSize: 8, fontFamily: '"Press Start 2P", cursive',
-              color: '#888',
-              animation: 'chatFadeIn 0.3s ease-out',
-            }}>
-              <span style={{ animation: 'chatSpin 1.5s linear infinite', display: 'inline-block' }}>⏳</span>
-              {' '}ממתין לתגובה...
-            </div>
-          )}
-        </div>
-      )}
-
-      {/* Status feedback (only when no messages visible) */}
-      {messages.length === 0 && (status === 'sent' || status === 'error') && (
-        <div style={{
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          gap: 6,
-          padding: '8px 0',
-          fontSize: 8, fontFamily: '"Press Start 2P", cursive',
-          color: status === 'sent' ? '#4ade80' : '#f87171',
-          animation: 'chatFadeIn 0.3s ease-out',
-        }}>
-          <span style={{
-            width: 20, height: 20, borderRadius: 0,
-            background: status === 'sent' ? 'rgba(74, 222, 128, 0.15)' : 'rgba(248, 113, 113, 0.15)',
-            display: 'flex', alignItems: 'center', justifyContent: 'center',
-            fontSize: 12,
-          }}>
-            {status === 'sent' ? '✓' : '✕'}
-          </span>
-          {status === 'sent' ? 'נשלח!' : 'שגיאה בשליחה'}
-        </div>
-      )}
-
-      {/* Input row */}
-      <div style={{
-        display: 'flex',
-        gap: 8,
-        alignItems: 'center',
+      {/* Messages area */}
+      <div ref={scrollRef} style={{
+        flex: 1, overflowY: 'auto', padding: '10px 12px',
+        display: 'flex', flexDirection: 'column', gap: 6,
+        scrollBehavior: 'smooth',
       }}>
-        <input
+        {messages.length === 0 && !streamText && (
+          <div style={{ textAlign: 'center', color: '#555', fontSize: 13, marginTop: 40 }}>
+            💬 שלח הודעה להתחיל שיחה
+          </div>
+        )}
+        {messages.map(msg => (
+          <div key={msg.id} style={{
+            alignSelf: msg.role === 'user' ? 'flex-start' : 'flex-end',
+            maxWidth: '80%',
+          }}>
+            <div style={{
+              padding: '8px 12px',
+              borderRadius: msg.role === 'user' ? '12px 12px 4px 12px' : '12px 12px 12px 4px',
+              background: msg.role === 'user' ? 'rgba(60, 60, 120, 0.5)' : 'rgba(255,255,255,0.06)',
+              border: msg.role === 'assistant' ? `1px solid ${agentColor}33` : '1px solid rgba(80,80,150,0.3)',
+              color: '#e0e0e0', fontSize: 13, lineHeight: 1.6, wordBreak: 'break-word',
+            }}>
+              {renderMarkdown(msg.text)}
+            </div>
+            <div style={{
+              fontSize: 10, color: '#666', marginTop: 2,
+              textAlign: msg.role === 'user' ? 'left' : 'right',
+              padding: '0 4px', display: 'flex', gap: 3,
+              justifyContent: msg.role === 'user' ? 'flex-start' : 'flex-end',
+            }}>
+              {msg.ts ? formatTime(msg.ts) : ''}
+              {msg.role === 'user' && msg.id.startsWith('local-') && ' ✓✓'}
+            </div>
+          </div>
+        ))}
+        {/* Streaming message — token by token */}
+        {streamText && (
+          <div style={{ alignSelf: 'flex-end', maxWidth: '80%' }}>
+            <div style={{
+              padding: '8px 12px',
+              borderRadius: '12px 12px 12px 4px',
+              background: 'rgba(255,255,255,0.06)',
+              border: `1px solid ${agentColor}33`,
+              color: '#e0e0e0', fontSize: 13, lineHeight: 1.6, wordBreak: 'break-word',
+            }}>
+              {renderMarkdown(streamText)}
+              <span style={{ animation: 'chatBlink 1s infinite', color: agentColor }}>▋</span>
+            </div>
+          </div>
+        )}
+        {/* Typing indicator */}
+        {polling && !streamText && (
+          <div style={{
+            alignSelf: 'flex-end', maxWidth: '60%',
+            padding: '10px 16px', borderRadius: '12px 12px 12px 4px',
+            background: 'rgba(255,255,255,0.04)',
+            border: `1px solid ${agentColor}22`,
+            color: '#888', fontSize: 16, letterSpacing: 2,
+          }}>
+            <span style={{ display: 'inline-block', animation: 'chatBounce 1.4s infinite' }}>●</span>
+            <span style={{ display: 'inline-block', animation: 'chatBounce 1.4s infinite 0.2s' }}>●</span>
+            <span style={{ display: 'inline-block', animation: 'chatBounce 1.4s infinite 0.4s' }}>●</span>
+          </div>
+        )}
+      </div>
+
+      {/* Input area */}
+      <div style={{
+        display: 'flex', gap: 8, padding: '8px 10px',
+        background: 'rgba(255,255,255,0.03)',
+        borderTop: '1px solid rgba(255,255,255,0.06)',
+        alignItems: 'flex-end', flexShrink: 0,
+      }}>
+        <textarea
           ref={inputRef}
-          type="text"
           value={text}
           onChange={e => setText(e.target.value)}
           onKeyDown={handleKeyDown}
-          placeholder="שלח הודעה..."
+          placeholder="הקלד הודעה..."
           disabled={status === 'sending'}
+          rows={1}
           style={{
-            flex: 1,
-            height: inputHeight,
-            minHeight: inputHeight,
-            padding: '0 12px',
-            borderRadius: 0,
-            border: '2px solid rgba(255,255,255,0.1)',
-            background: 'rgba(255,255,255,0.05)',
-            color: '#eee',
-            fontSize: compact ? 8 : 9,
-            fontFamily: '"Press Start 2P", cursive',
-            boxShadow: 'inset -2px -2px 0 #0a0a1a, inset 2px 2px 0 #2a2a4a',
-            outline: 'none',
-            direction: 'rtl',
-            transition: 'border-color 0.2s, background 0.2s',
-            opacity: status === 'sending' ? 0.6 : 1,
+            flex: 1, resize: 'none',
+            minHeight: 40, maxHeight: 100,
+            padding: '10px 14px',
+            borderRadius: 8,
+            border: '1px solid rgba(255,255,255,0.1)',
+            background: 'rgba(255,255,255,0.04)',
+            color: '#eee', fontSize: 14,
+            fontFamily: '"Heebo", sans-serif',
+            outline: 'none', direction: 'rtl',
+            lineHeight: 1.4,
           }}
-          onFocus={e => {
-            e.currentTarget.style.borderColor = agentColor
-            e.currentTarget.style.background = 'rgba(255,255,255,0.08)'
-          }}
-          onBlur={e => {
-            e.currentTarget.style.borderColor = 'rgba(255,255,255,0.1)'
-            e.currentTarget.style.background = 'rgba(255,255,255,0.05)'
+          onInput={e => {
+            const el = e.currentTarget
+            el.style.height = 'auto'
+            el.style.height = Math.min(el.scrollHeight, 100) + 'px'
           }}
         />
         <button
           onClick={handleSend}
           disabled={!text.trim() || status === 'sending'}
           style={{
-            width: inputHeight,
-            height: inputHeight,
-            minWidth: inputHeight,
-            minHeight: inputHeight,
-            borderRadius: 0,
-            border: '2px solid #3a3a5c',
-            background: text.trim() && status !== 'sending'
-              ? agentColor
-              : 'rgba(255,255,255,0.08)',
-            boxShadow: 'inset -2px -2px 0 #0a0a1a, inset 2px 2px 0 #2a2a4a',
-            fontFamily: '"Press Start 2P", cursive',
-            color: text.trim() && status !== 'sending' ? '#fff' : '#555',
-            fontSize: compact ? 16 : 18,
+            width: 40, height: 40, borderRadius: 8,
+            border: 'none',
+            background: text.trim() && status !== 'sending' ? agentColor : 'rgba(255,255,255,0.08)',
+            color: '#fff', fontSize: 18,
             cursor: text.trim() && status !== 'sending' ? 'pointer' : 'default',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            transition: 'background 0.2s, transform 0.1s',
-            transform: status === 'sending' ? 'scale(0.95)' : 'scale(1)',
-            flexShrink: 0,
-          }}
-          onMouseDown={e => {
-            if (text.trim()) (e.currentTarget as HTMLElement).style.transform = 'scale(0.9)'
-          }}
-          onMouseUp={e => {
-            (e.currentTarget as HTMLElement).style.transform = 'scale(1)'
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            flexShrink: 0, transition: 'background 0.2s',
           }}
           title="שלח"
         >
           {status === 'sending' ? (
-            <span style={{
-              display: 'inline-block',
-              width: 16, height: 16,
-              border: '2px solid rgba(255,255,255,0.3)',
-              borderTopColor: '#fff',
-              borderRadius: 0,
-              animation: 'chatSpin 0.6s linear infinite',
-            }} />
-          ) : '←'}
+            <span style={{ display: 'inline-block', width: 16, height: 16, border: '2px solid rgba(255,255,255,0.3)', borderTopColor: '#fff', borderRadius: '50%', animation: 'chatSpin 0.6s linear infinite' }} />
+          ) : '➤'}
         </button>
       </div>
-
-      {/* CSS animations are in the global <style> tag */}
     </div>
   )
 }
