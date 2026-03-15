@@ -1,4 +1,4 @@
-import { useRef, useEffect, useState, useCallback, createContext, useContext } from 'react'
+import { useRef, useEffect, useState, useCallback } from 'react'
 
 // ── i18n ──
 type Lang = 'he' | 'en'
@@ -1915,7 +1915,7 @@ function SettingsScreen({ onConnect, onDemo, t, dir, toggleLang, lang }: {
             transition: 'background 0.2s',
           }}
         >
-          התחבר
+          {t.connect}
         </button>
 
         <div style={{ textAlign: 'center' }}>
@@ -1927,7 +1927,7 @@ function SettingsScreen({ onConnect, onDemo, t, dir, toggleLang, lang }: {
               fontFamily: '"Heebo", "Segoe UI", sans-serif',
             }}
           >
-            סביבת דמו
+            {t.demoMode}
           </button>
         </div>
       </div>
