@@ -772,6 +772,7 @@ const walkHasSwRow: Record<string, boolean> = {} // true if sprite has 2 rows (6
 
 // Cubicle sprites — personalized desk+monitor+agent combo (32×32, single frame)
 const cubicleSprites: Record<string, HTMLImageElement> = {}
+let genericCubicleImg: HTMLImageElement | null = null
 
 const SPRITE_ALIASES: Record<string, string> = { main: 'yogi' }
 
@@ -828,7 +829,7 @@ function loadSpritesForAgents(defs: AgentDef[]) {
     if (!cubicleSprites[agent.id]) {
       const img = new Image()
       img.onerror = () => { /* silent — no personalized cubicle */ }
-      img.src = `/assets/characters/cubicle_${spriteId}.png`
+      img.src = `/assets/furniture/cubicle_${spriteId}.png`
       cubicleSprites[agent.id] = img
     }
 
@@ -1698,6 +1699,34 @@ function drawScene(
         ctx.fillText(label, lsx, lsy + 34)
       }})
     }
+  }
+
+  // Cubicle sprites — permanent fixtures at each work desk position
+  for (let i = 0; i < CUBICLE_POSITIONS.length; i++) {
+    const [cc, cr] = CUBICLE_POSITIONS[i]
+    const [cix, ciy] = toIso(cc, cr)
+    const csx = ox + cix
+    const csy = oy + ciy
+    // Find which agent owns this desk
+    const ownerDef = allDefs.find(d => {
+      const known = KNOWN_AGENTS[d.id]
+      return known && known.fixedIndex === i
+    })
+    const cubImg = ownerDef ? cubicleSprites[ownerDef.id] : null
+    // Use generic cubicle.png as fallback
+    if (!genericCubicleImg) {
+      genericCubicleImg = new Image()
+      genericCubicleImg.src = '/assets/furniture/cubicle.png'
+    }
+    const img = (cubImg?.complete && cubImg.naturalWidth > 0) ? cubImg : genericCubicleImg
+    drawables.push({ sortY: cc + cr - 0.1, draw: () => {
+      if (img?.complete && img.naturalWidth > 0) {
+        ctx.imageSmoothingEnabled = false
+        ctx.drawImage(img, 0, 0, SPRITE_SIZE, SPRITE_SIZE,
+          Math.round(csx - SPRITE_DISPLAY / 2), Math.round(csy - SPRITE_DISPLAY + 8), SPRITE_DISPLAY, SPRITE_DISPLAY)
+        ctx.imageSmoothingEnabled = true
+      }
+    }})
   }
 
   // Decorations (Amir's assets)
