@@ -46,50 +46,62 @@ const BASE_MAP_ROWS = 16
 const SPRITE_SIZE = 32
 const SPRITE_DISPLAY = 64 // 2x scale
 
-// Dynamic grid — expands when >12 agents
+// Dynamic grid — expands with agent count (supports up to 50+)
 let MAP_COLS = BASE_MAP_COLS
 let MAP_ROWS = BASE_MAP_ROWS
 
 /**
- * Compute grid size based on agent count.
- * Base: 16x12 supports 12 cubicles. Each extra 4 agents adds a row.
- * Work zone starts at col 4, so effective cubicle cols = (MAP_COLS - 5) / 2
+ * HORIZONTAL ZONE LAYOUT (top to bottom):
+ *   ☕ Lounge (top)   — idle/offline agents
+ *   💻 Work (middle)  — active/working agents
+ *   🐛 Errors (bottom) — error state agents (thin strip)
+ *
+ * All zones span full width. Height grows dynamically with agent count.
  */
-// Layout constants — lounge on left, work on right
-let LOUNGE_COLS = 11         // dynamic — updated in computeGridSize
-let WORK_START_COL = 12      // dynamic — updated in computeGridSize
-const WORK_COLS_PER_AGENT = 4 // enough space between cubicles
-const WORK_ROWS_PER_AGENT = 4
-// Force at least 3 rows for visual balance
-function getWorkAgentsPerRow(agentCount: number): number {
-  if (agentCount <= 6) return 2    // 6 agents → 2×3
-  if (agentCount <= 9) return 3    // 9 agents → 3×3
-  if (agentCount <= 16) return 4   // 12-16 → 4×3 or 4×4
-  return 5                          // 17+ → 5 per row
+const COLS_PER_AGENT = 4   // horizontal spacing between agents
+const ROWS_PER_AGENT = 4   // vertical spacing between agents
+
+// Dynamic — updated in computeGridSize
+let AGENTS_PER_ROW = 4
+let LOUNGE_START_ROW = 1
+let LOUNGE_END_ROW = 5
+let WORK_START_ROW = 6
+let WORK_END_ROW = 10
+let ERROR_START_ROW = 11
+let ERROR_END_ROW = 13
+
+function getAgentsPerRow(agentCount: number): number {
+  if (agentCount <= 6) return 3
+  if (agentCount <= 12) return 4
+  if (agentCount <= 20) return 5
+  if (agentCount <= 30) return 6
+  if (agentCount <= 42) return 7
+  return 8  // 50+ agents
 }
-let WORK_AGENTS_PER_ROW = 3
-const LOUNGE_ROWS_PER_AGENT = 4
-
 function computeGridSize(agentCount: number) {
-  // Update dynamic agents-per-row based on count
-  WORK_AGENTS_PER_ROW = getWorkAgentsPerRow(agentCount)
+  const n = Math.max(agentCount, 1)
+  AGENTS_PER_ROW = getAgentsPerRow(n)
 
-  // Work zone: cubicle for EVERY agent
-  const workRows = Math.ceil(agentCount / WORK_AGENTS_PER_ROW)
-  const workHeight = workRows * WORK_ROWS_PER_AGENT + 3
+  // All zones span full width
+  const zoneWidth = AGENTS_PER_ROW * COLS_PER_AGENT + 2
 
-  // Lounge: 3 columns (0, 4, 8), ALL agents could be idle
-  const LOUNGE_COLS_COUNT = 3
-  const loungeColSpacing = WORK_COLS_PER_AGENT // same spacing as work zone
-  const loungeRows = Math.ceil(agentCount / LOUNGE_COLS_COUNT)
-  const loungeHeight = loungeRows * LOUNGE_ROWS_PER_AGENT + 3
+  // Lounge zone (top) — room for ALL agents (worst case: all idle)
+  const loungeAgentRows = Math.ceil(n / AGENTS_PER_ROW)
+  LOUNGE_START_ROW = 1
+  LOUNGE_END_ROW = LOUNGE_START_ROW + loungeAgentRows * ROWS_PER_AGENT + 1
 
-  // Lounge width = columns * spacing + margin
-  LOUNGE_COLS = LOUNGE_COLS_COUNT * loungeColSpacing + 1
-  WORK_START_COL = LOUNGE_COLS + 1
+  // Work zone (middle) — room for ALL agents
+  const workAgentRows = Math.ceil(n / AGENTS_PER_ROW)
+  WORK_START_ROW = LOUNGE_END_ROW + 1
+  WORK_END_ROW = WORK_START_ROW + workAgentRows * ROWS_PER_AGENT + 1
 
-  MAP_ROWS = Math.max(BASE_MAP_ROWS, workHeight, loungeHeight)
-  MAP_COLS = Math.max(BASE_MAP_COLS, WORK_START_COL + WORK_AGENTS_PER_ROW * WORK_COLS_PER_AGENT + 2)
+  // Error zone (bottom) — thin strip, max 1-2 rows of agents
+  const errorAgentRows = Math.max(1, Math.ceil(Math.min(n, AGENTS_PER_ROW * 2) / AGENTS_PER_ROW))
+  ERROR_START_ROW = WORK_END_ROW + 1
+  ERROR_END_ROW = ERROR_START_ROW + errorAgentRows * ROWS_PER_AGENT
+
+  MAP_COLS = Math.max(BASE_MAP_COLS, zoneWidth)
+  MAP_ROWS = Math.max(BASE_MAP_ROWS, ERROR_END_ROW + 1)
 }
 
 // ── Responsive breakpoints ──
@@ -170,11 +182,10 @@ function toIso(cx: number, cy: number): [number, number] {
 
 // ── Zone definitions (in tile coords) — uses dynamic grid size ──
 function getZoneAt(col: number, row: number): Zone {
-  const bugStartCol = Math.max(10, MAP_COLS - 6)
-  const bugStartRow = Math.max(8, MAP_ROWS - 4)
-  if (col >= bugStartCol && row >= bugStartRow) return 'bugs'
-  if (col < LOUNGE_COLS) return 'lounge'
-  return 'work'
+  // Horizontal zones: top=lounge, middle=work, bottom=errors
+  if (row >= ERROR_START_ROW) return 'bugs'
+  if (row >= WORK_START_ROW) return 'work'
+  return 'lounge'
 }
 
 // ── Tilemap — dynamically generated ──
@@ -242,18 +253,18 @@ let WALLS = generateWalls()
 
 // ── Cubicle positions — generated dynamically based on agent count ──
 function generateCubiclePositions(count: number): [number, number][] {
-  const cols = Math.min(WORK_AGENTS_PER_ROW, count)
+  const cols = Math.min(AGENTS_PER_ROW, Math.max(1, count))
   const rows = Math.ceil(count / cols)
   const positions: [number, number][] = []
   for (let r = 0; r < rows; r++) {
     for (let c = 0; c < cols && positions.length < count; c++) {
-      positions.push([WORK_START_COL + c * WORK_COLS_PER_AGENT, 2 + r * WORK_ROWS_PER_AGENT])
+      positions.push([1 + c * COLS_PER_AGENT, WORK_START_ROW + 1 + r * ROWS_PER_AGENT])
     }
   }
   return positions
 }
 
-// Default 12 cubicles (overridden when agents are discovered)
+// Default cubicles (overridden when agents are discovered)
 let CUBICLE_POSITIONS: [number, number][] = generateCubiclePositions(12)
 
 // Pan clamping
@@ -552,18 +563,16 @@ function getZoneForState(state: AgentState): Zone {
   return 'lounge'
 }
 
-// ── Lounge spots — agents sit on sofas in pairs, cozy layout ──
-// Lounge spots — single column, 3 rows apart for clear separation
+// ── Lounge spots — horizontal zone at top ──
 function generateLoungeSpots(count: number): [number, number][] {
   const spots: [number, number][] = []
-  // Dynamic columns matching work zone spacing
-  const colSpacing = WORK_COLS_PER_AGENT
-  const cols = [0, colSpacing, colSpacing * 2]
+  const cols: number[] = []
+  for (let i = 0; i < AGENTS_PER_ROW; i++) cols.push(1 + i * COLS_PER_AGENT)
   const rowsNeeded = Math.ceil(count / cols.length)
   for (let r = 0; r < rowsNeeded; r++) {
     for (const c of cols) {
       if (spots.length >= count) break
-      spots.push([c, 2 + r * LOUNGE_ROWS_PER_AGENT])
+      spots.push([c, LOUNGE_START_ROW + 1 + r * ROWS_PER_AGENT])
     }
   }
   return spots
@@ -577,18 +586,20 @@ let LOUNGE_SOFA_POSITIONS = LOUNGE_SPOTS.map(([c, r]): [number, number] => [c + 
 // ── Bug zone spots (5 unique positions) ──
 // Bug zone spots — spaced out in the larger map
 // Bug zone spots — dynamically positioned in the bottom-right
-function generateBugSpots(): [number, number][] {
-  const bugStartCol = Math.max(10, MAP_COLS - 6) + 1
-  const bugStartRow = Math.max(8, MAP_ROWS - 4) + 1
-  return [
-    [bugStartCol, bugStartRow],
-    [bugStartCol + 3, bugStartRow],
-    [bugStartCol, bugStartRow + 2],
-    [bugStartCol + 3, bugStartRow + 2],
-    [bugStartCol + 1, bugStartRow + 1],
-  ]
+function generateBugSpots(count: number): [number, number][] {
+  const spots: [number, number][] = []
+  const cols: number[] = []
+  for (let i = 0; i < AGENTS_PER_ROW; i++) cols.push(1 + i * COLS_PER_AGENT)
+  const rowsNeeded = Math.max(1, Math.ceil(count / cols.length))
+  for (let r = 0; r < rowsNeeded; r++) {
+    for (const c of cols) {
+      if (spots.length >= count) break
+      spots.push([c, ERROR_START_ROW + 1 + r * ROWS_PER_AGENT])
+    }
+  }
+  return spots
 }
-let BUG_SPOTS = generateBugSpots()
+let BUG_SPOTS = generateBugSpots(12)
 
 // Track which lounge/bug spots are taken (by agent id)
 const workAssignments: Map<string, number> = new Map()
@@ -644,10 +655,9 @@ function buildAgents(defs: AgentDef[]): AgentRuntime[] {
   FLOOR_MAP = generateFloorMap()
   WALLS = generateWalls()
   BUG_WORKSTATIONS = generateBugWorkstations()
-  BUG_SPOTS = generateBugSpots()
+  BUG_SPOTS = generateBugSpots(defs.length)
   // Generate cubicles for ALL agents — each agent has a fixed desk
-  const maxWorkCount = defs.length
-  CUBICLE_POSITIONS = generateCubiclePositions(maxWorkCount)
+  CUBICLE_POSITIONS = generateCubiclePositions(defs.length)
   // Regenerate lounge spots — enough for ALL agents
   LOUNGE_SPOTS = generateLoungeSpots(defs.length)
   LOUNGE_SOFA_POSITIONS = LOUNGE_SPOTS.map(([c, r]): [number, number] => [c + 1, r - 1])
@@ -1465,17 +1475,16 @@ function drawScene(
   ctx.textAlign = 'center'
   ctx.fillText('🏢 Virtual Office', w / 2, 28)
 
-  // Zone labels — positioned relative to dynamic grid
+  // Zone labels — centered in each horizontal zone
   ctx.font = `${f.zone}px "Heebo", "Segoe UI", sans-serif`
   ctx.fillStyle = 'rgba(255,255,255,0.25)'
-  const [lx, ly] = toIso(1.5, Math.min(5.5, MAP_ROWS / 2))
-  ctx.fillText('☕ Lounge', ox + lx, oy + ly - 30)
-  const [wx, wy] = toIso(Math.min(8, (4 + MAP_COLS) / 2), Math.min(4, MAP_ROWS / 3))
-  ctx.fillText('💻 Work Zone', ox + wx, oy + wy - 30)
-  const bugStartCol = Math.max(10, MAP_COLS - 6)
-  const bugStartRow = Math.max(8, MAP_ROWS - 4)
-  const [bx, by] = toIso(bugStartCol + 2.5, bugStartRow + 1)
-  ctx.fillText('🐛 Bug Zone', ox + bx, oy + by - 30)
+  const midCol = MAP_COLS / 2
+  const [lx, ly] = toIso(midCol, LOUNGE_START_ROW)
+  ctx.fillText('☕ Lounge', ox + lx, oy + ly - 10)
+  const [wx, wy] = toIso(midCol, WORK_START_ROW)
+  ctx.fillText('💻 Work Zone', ox + wx, oy + wy - 10)
+  const [bx, by] = toIso(midCol, ERROR_START_ROW)
+  ctx.fillText('🐛 Errors', ox + bx, oy + by - 10)
 
   // --- Floor tilemap ---
   for (let row = 0; row < MAP_ROWS; row++) {

@@ -1,0 +1,33 @@
+{
+  "frames": {
+    "lounge_seat": {
+      "frame": {
+        "x": 0,
+        "y": 0,
+        "w": 64,
+        "h": 48
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 64,
+        "h": 48
+      },
+      "sourceSize": {
+        "w": 64,
+        "h": 48
+      }
+    }
+  },
+  "meta": {
+    "image": "lounge_seat.png",
+    "format": "RGBA8888",
+    "size": {
+      "w": 64,
+      "h": 48
+    },
+    "scale": "1"
+  }
+}
