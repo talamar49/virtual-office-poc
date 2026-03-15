@@ -3518,9 +3518,18 @@ function ChatInput({ agentId, agentColor, compact, onSend, onFetchHistory }: {
     }
   }, [agentId, onFetchHistory])
 
-  // Auto-scroll to bottom
+  // Auto-scroll to bottom — instant on first load, no scroll animation
+  const prevMsgCountRef = useRef(0)
   useEffect(() => {
-    if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight
+    if (!scrollRef.current) return
+    const el = scrollRef.current
+    // Only auto-scroll if user is near bottom (within 150px) or it's first load
+    const isNearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 150
+    const isFirstLoad = prevMsgCountRef.current === 0 && messages.length > 0
+    if (isNearBottom || isFirstLoad) {
+      el.scrollTop = el.scrollHeight
+    }
+    prevMsgCountRef.current = messages.length
   }, [messages, streamText])
 
   // WebSocket listener for streaming responses from backend watcher
@@ -3590,9 +3599,9 @@ function ChatInput({ agentId, agentColor, compact, onSend, onFetchHistory }: {
             const existingTexts = new Set(current.map(m => `${m.role}:${m.text.substring(0, 100)}`))
             const newMsgs = history.filter(m => {
               if (existingIds.has(m.id)) return false
-              // Deduplicate by role+text (user messages added locally before poll returns them)
+              // Deduplicate by role+text — prevents duplicates from WS + poll race
               const textKey = `${m.role}:${m.text.substring(0, 100)}`
-              if (m.role === 'user' && existingTexts.has(textKey)) return false
+              if (existingTexts.has(textKey)) return false
               return m.ts > lastTs
             })
             if (newMsgs.length > 0) {
@@ -3652,7 +3661,7 @@ function ChatInput({ agentId, agentColor, compact, onSend, onFetchHistory }: {
       <div ref={scrollRef} style={{
         flex: 1, overflowY: 'auto', padding: '10px 12px',
         display: 'flex', flexDirection: 'column', gap: 6,
-        scrollBehavior: 'smooth',
+
       }}>
         {messages.length === 0 && !streamText && (
           <div style={{ textAlign: 'center', color: '#555', fontSize: 13, marginTop: 40 }}>
@@ -3771,17 +3780,18 @@ function ChatInput({ agentId, agentColor, compact, onSend, onFetchHistory }: {
           style={{
             width: 40, height: 40, borderRadius: 8,
             border: 'none',
-            background: text.trim() && status !== 'sending' ? agentColor : 'rgba(255,255,255,0.08)',
+            background: text.trim() && status !== 'sending' ? '#22c55e' : 'rgba(255,255,255,0.08)',
             color: '#fff', fontSize: 18,
             cursor: text.trim() && status !== 'sending' ? 'pointer' : 'default',
             display: 'flex', alignItems: 'center', justifyContent: 'center',
-            flexShrink: 0, transition: 'background 0.2s',
+            flexShrink: 0, transition: 'background 0.3s, transform 0.15s',
+            transform: text.trim() ? 'scale(1.05)' : 'scale(1)',
           }}
           title="שלח"
         >
           {status === 'sending' ? (
             <span style={{ display: 'inline-block', width: 16, height: 16, border: '2px solid rgba(255,255,255,0.3)', borderTopColor: '#fff', borderRadius: '50%', animation: 'chatSpin 0.6s linear infinite' }} />
-          ) : '◀'}
+          ) : '▶'}
         </button>
       </div>
     </div>
