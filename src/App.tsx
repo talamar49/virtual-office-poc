@@ -11,6 +11,35 @@ interface ChatMessage {
   source?: string // channel source: 'discord', 'telegram', 'webchat', etc.
 }
 
+// Filter out internal/system messages that shouldn't appear in chat UI
+const INTERNAL_MSG_PATTERNS = [
+  /agent-to-agent announce/i,
+  /ANNOUNCE_SKIP/i,
+  /HEARTBEAT_OK/i,
+  /^NO_REPLY$/i,
+  /^\[Inter-session message\]/,
+  /^\[.*announce.*step\]/i,
+]
+function isVisibleMessage(msg: ChatMessage): boolean {
+  return !INTERNAL_MSG_PATTERNS.some(p => p.test(msg.text.trim()))
+}
+
+function deduplicateMessages(msgs: ChatMessage[]): ChatMessage[] {
+  const seen = new Set<string>()
+  return msgs.filter(m => {
+    // Deduplicate by ID
+    if (seen.has(m.id)) return false
+    seen.add(m.id)
+    // Also deduplicate by exact text+role within 5s window
+    const key = `${m.role}:${m.text}`
+    const duplicate = msgs.some(other =>
+      other !== m && other.role === m.role && other.text === m.text &&
+      Math.abs(other.ts - m.ts) < 5000 && seen.has(other.id) === false
+    )
+    return true
+  })
+}
+
 interface AgentDef {
   id: string
   name: string
