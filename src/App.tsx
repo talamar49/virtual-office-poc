@@ -62,10 +62,7 @@ interface AgentRuntime {
   y: number
   tx: number
   ty: number
-  zone: Zone
 }
-
-type Zone = 'work' | 'lounge' | 'bugs'
 
 // ── Isometric constants ──
 const TILE_W = 64
@@ -75,29 +72,29 @@ const BASE_MAP_ROWS = 16
 const SPRITE_SIZE = 32
 const SPRITE_DISPLAY = 64 // 2x scale
 
-// Dynamic grid — expands with agent count (supports up to 50+)
+// Dynamic grid — expands with agent count
 let MAP_COLS = BASE_MAP_COLS
 let MAP_ROWS = BASE_MAP_ROWS
 
 /**
- * HORIZONTAL ZONE LAYOUT (top to bottom):
- *   ☕ Lounge (top)   — idle/offline agents
- *   💻 Work (middle)  — active/working agents
- *   🐛 Errors (bottom) — error state agents (thin strip)
+ * UNIFIED OFFICE LAYOUT:
+ *   📋 Reception (row 1-2)       — entrance area at top
+ *   💻 Cubicles (row 3+)         — agent desks in rows, aisle every 2 rows
+ *   ☕ Coffee corner (bottom-left) — decorative
+ *   🏢 Meeting room (bottom-right) — decorative
  *
- * All zones span full width. Height grows dynamically with agent count.
+ * All agents stay at their cubicle regardless of state.
+ * Status shown visually: typing animation, idle pose, error icon, offline transparency.
  */
 const COLS_PER_AGENT = 4   // horizontal spacing between agents
 const ROWS_PER_AGENT = 4   // vertical spacing between agents
+const RECEPTION_ROWS = 3   // reception area at top
+const AISLE_EVERY = 2      // aisle row gap every N agent rows
+const AISLE_SIZE = 1        // how many tile-rows the aisle takes
 
 // Dynamic — updated in computeGridSize
 let AGENTS_PER_ROW = 4
-let LOUNGE_START_ROW = 1
-let LOUNGE_END_ROW = 5
-let WORK_START_ROW = 6
-let WORK_END_ROW = 10
-let ERROR_START_ROW = 11
-let ERROR_END_ROW = 13
+let DESK_START_ROW = RECEPTION_ROWS + 1
 
 function getAgentsPerRow(agentCount: number): number {
   if (agentCount <= 6) return 3
@@ -105,32 +102,23 @@ function getAgentsPerRow(agentCount: number): number {
   if (agentCount <= 20) return 5
   if (agentCount <= 30) return 6
   if (agentCount <= 42) return 7
-  return 8  // 50+ agents
+  return 8
 }
+
 function computeGridSize(agentCount: number) {
   const n = Math.max(agentCount, 1)
   AGENTS_PER_ROW = getAgentsPerRow(n)
 
-  // All zones span full width
-  const zoneWidth = AGENTS_PER_ROW * COLS_PER_AGENT + 2
+  const totalAgentRows = Math.ceil(n / AGENTS_PER_ROW)
+  const aisleCount = Math.max(0, Math.floor((totalAgentRows - 1) / AISLE_EVERY))
+  const deskHeight = totalAgentRows * ROWS_PER_AGENT + aisleCount * AISLE_SIZE
 
-  // Lounge zone (top) — room for ALL agents (worst case: all idle)
-  const loungeAgentRows = Math.ceil(n / AGENTS_PER_ROW)
-  LOUNGE_START_ROW = 1
-  LOUNGE_END_ROW = LOUNGE_START_ROW + loungeAgentRows * ROWS_PER_AGENT + 1
+  // +3 for bottom features (coffee corner, meeting room)
+  const officeWidth = AGENTS_PER_ROW * COLS_PER_AGENT + 2
+  DESK_START_ROW = RECEPTION_ROWS + 1
 
-  // Work zone (middle) — room for ALL agents
-  const workAgentRows = Math.ceil(n / AGENTS_PER_ROW)
-  WORK_START_ROW = LOUNGE_END_ROW + 1
-  WORK_END_ROW = WORK_START_ROW + workAgentRows * ROWS_PER_AGENT + 1
-
-  // Error zone (bottom) — thin strip, max 1-2 rows of agents
-  const errorAgentRows = Math.max(1, Math.ceil(Math.min(n, AGENTS_PER_ROW * 2) / AGENTS_PER_ROW))
-  ERROR_START_ROW = WORK_END_ROW + 1
-  ERROR_END_ROW = ERROR_START_ROW + errorAgentRows * ROWS_PER_AGENT
-
-  MAP_COLS = Math.max(BASE_MAP_COLS, zoneWidth)
-  MAP_ROWS = Math.max(BASE_MAP_ROWS, ERROR_END_ROW + 1)
+  MAP_COLS = Math.max(BASE_MAP_COLS, officeWidth)
+  MAP_ROWS = Math.max(BASE_MAP_ROWS, DESK_START_ROW + deskHeight + 4)
 }
 
 // ── Responsive breakpoints ──
@@ -209,12 +197,16 @@ function toIso(cx: number, cy: number): [number, number] {
   ]
 }
 
-// ── Zone definitions (in tile coords) — uses dynamic grid size ──
-function getZoneAt(col: number, row: number): Zone {
-  // Horizontal zones: top=lounge, middle=work, bottom=errors
-  if (row >= ERROR_START_ROW) return 'bugs'
-  if (row >= WORK_START_ROW) return 'work'
-  return 'lounge'
+// ── Unified office layout (in tile coords) ──
+// No zones — unified office. This helper determines floor tile type for coloring.
+function isReceptionArea(row: number): boolean {
+  return row < DESK_START_ROW
+}
+function isCoffeeCorner(col: number, row: number): boolean {
+  return col <= 3 && row >= MAP_ROWS - 5
+}
+function isMeetingRoom(col: number, row: number): boolean {
+  return col >= MAP_COLS - 5 && row >= MAP_ROWS - 5
 }
 
 // ── Tilemap — dynamically generated ──
@@ -226,10 +218,10 @@ function generateFloorMap(): number[][] {
   for (let row = 0; row < MAP_ROWS; row++) {
     const r: number[] = []
     for (let col = 0; col < MAP_COLS; col++) {
-      const zone = getZoneAt(col, row)
-      if (zone === 'lounge') r.push(2)       // carpet/lounge
-      else if (zone === 'bugs') r.push(3)    // dark/bug zone
-      else r.push(0)                          // work zone
+      if (isReceptionArea(row)) r.push(1)          // reception — stone
+      else if (isCoffeeCorner(col, row)) r.push(2) // coffee corner — carpet
+      else if (isMeetingRoom(col, row)) r.push(3)  // meeting room — dark
+      else r.push(0)                                // main office floor
     }
     map.push(r)
   }
@@ -238,13 +230,12 @@ function generateFloorMap(): number[][] {
 
 let FLOOR_MAP = generateFloorMap()
 
-// Floor tile colors (2 shades each for checkerboard pattern)
-// Distinct colors per zone — easy to see where each zone is
+// Floor tile colors — unified office with subtle area accents
 const FLOOR_STYLES: Record<number, [string, string]> = {
-  0: ['#2a1f14', '#332618'],  // work zone — warm wood
-  1: ['#1a3040', '#1e3848'],  // stone — cool blue-gray
-  2: ['#3a2820', '#422e24'],  // lounge — carpet brown
-  3: ['#3a1a1a', '#421e1e'],  // bug zone — dark red
+  0: ['#2a1f14', '#332618'],  // main office — warm wood
+  1: ['#1a3040', '#1e3848'],  // reception — cool stone
+  2: ['#3a2820', '#422e24'],  // coffee corner — carpet brown
+  3: ['#1e1e30', '#242440'],  // meeting room — dark blue
 }
 
 // Wall tiles — positions along edges
@@ -281,13 +272,16 @@ function generateWalls(): WallTile[] {
 let WALLS = generateWalls()
 
 // ── Cubicle positions — generated dynamically based on agent count ──
-function generateCubiclePositions(count: number): [number, number][] {
+function generateCubiclePositions(count: number, startRow: number = DESK_START_ROW): [number, number][] {
   const cols = Math.min(AGENTS_PER_ROW, Math.max(1, count))
   const rows = Math.ceil(count / cols)
   const positions: [number, number][] = []
   for (let r = 0; r < rows; r++) {
+    // Add aisle gap every AISLE_EVERY rows
+    const aislesBefore = Math.floor(r / AISLE_EVERY)
+    const rowOffset = startRow + 1 + r * ROWS_PER_AGENT + aislesBefore * AISLE_SIZE
     for (let c = 0; c < cols && positions.length < count; c++) {
-      positions.push([1 + c * COLS_PER_AGENT, WORK_START_ROW + 1 + r * ROWS_PER_AGENT])
+      positions.push([1 + c * COLS_PER_AGENT, rowOffset])
     }
   }
   return positions
@@ -305,25 +299,7 @@ function clampPan(pan: { x: number; y: number }) {
   pan.y = Math.max(-maxY, Math.min(maxY, pan.y))
 }
 
-// ── Lounge furniture positions ──
-const SOFA_POSITIONS: [number, number][] = [
-]
-const COFFEE_TABLE: [number, number] = [2, 5]
-const COFFEE_MACHINE: [number, number] = [0, 0]
-
-// ── Bug zone workstation positions (dynamic) ──
-function generateBugWorkstations(): [number, number][] {
-  const startCol = Math.max(10, MAP_COLS - 6) + 1
-  const startRow = Math.max(8, MAP_ROWS - 4) + 1
-  return [
-    [startCol, startRow],
-    [startCol + 2, startRow],
-    [startCol + 1, startRow + 1],
-    [startCol, startRow + 2],
-    [startCol + 2, startRow + 2],
-  ]
-}
-let BUG_WORKSTATIONS = generateBugWorkstations()
+// (No separate lounge/bug furniture — unified office)
 
 // ── Decoration positions (Amir's assets) ──
 interface Decoration {
@@ -348,9 +324,13 @@ let _decoIdCounter = 0
 function nextDecoId() { return ++_decoIdCounter }
 
 const DEFAULT_DECORATIONS: Decoration[] = [
-  // Minimal — just a few plants for life
+  // Reception area — plants at entrance
   { type: 'plant_large', col: 0, row: 0, scale: 1.1 },
-  { type: 'plant_small', col: 0, row: 8, scale: 1 },
+  { type: 'plant_small', col: 0, row: 2, scale: 1 },
+  // Coffee corner (bottom-left) — plant + table
+  { type: 'plant_large', col: 1, row: MAP_ROWS - 3, scale: 1.1 },
+  // Meeting room (bottom-right) — plant
+  { type: 'plant_small', col: MAP_COLS - 3, row: MAP_ROWS - 3, scale: 1 },
 ]
 
 // ── Decoration persistence ──
@@ -585,97 +565,14 @@ const STATE_META: Record<AgentState, { color: string; label: string; dot: string
   error:   { color: '#f44336', label: 'שגיאה',    dot: '🔴' },
 }
 
-// ── Zone assignment logic ──
-function getZoneForState(state: AgentState): Zone {
-  if (state === 'working' || state === 'active') return 'work'
-  if (state === 'error') return 'bugs'
-  return 'lounge'
-}
-
-// ── Lounge spots — horizontal zone at top ──
-function generateLoungeSpots(count: number): [number, number][] {
-  const spots: [number, number][] = []
-  const cols: number[] = []
-  for (let i = 0; i < AGENTS_PER_ROW; i++) cols.push(1 + i * COLS_PER_AGENT)
-  const rowsNeeded = Math.ceil(count / cols.length)
-  for (let r = 0; r < rowsNeeded; r++) {
-    for (const c of cols) {
-      if (spots.length >= count) break
-      spots.push([c, LOUNGE_START_ROW + 1 + r * ROWS_PER_AGENT])
-    }
-  }
-  return spots
-}
-
-let LOUNGE_SPOTS = generateLoungeSpots(12)
-// Sofa at every lounge spot
-// Sofas positioned 1 tile offset from agent spots (so agents sit beside, not on)
-let LOUNGE_SOFA_POSITIONS = LOUNGE_SPOTS.map(([c, r]): [number, number] => [c + 1, r - 1])
-
-// ── Bug zone spots (5 unique positions) ──
-// Bug zone spots — spaced out in the larger map
-// Bug zone spots — dynamically positioned in the bottom-right
-function generateBugSpots(count: number): [number, number][] {
-  const spots: [number, number][] = []
-  const cols: number[] = []
-  for (let i = 0; i < AGENTS_PER_ROW; i++) cols.push(1 + i * COLS_PER_AGENT)
-  const rowsNeeded = Math.max(1, Math.ceil(count / cols.length))
-  for (let r = 0; r < rowsNeeded; r++) {
-    for (const c of cols) {
-      if (spots.length >= count) break
-      spots.push([c, ERROR_START_ROW + 1 + r * ROWS_PER_AGENT])
-    }
-  }
-  return spots
-}
-let BUG_SPOTS = generateBugSpots(12)
-
-// Track which lounge/bug spots are taken (by agent id)
-const workAssignments: Map<string, number> = new Map()
-const loungeAssignments: Map<string, number> = new Map()
-const bugAssignments: Map<string, number> = new Map()
-
-function assignSpot(agentId: string, spots: [number, number][], assignments: Map<string, number>): [number, number] {
-  // Known agents ALWAYS go to their fixed index — no exceptions
-  const known = KNOWN_AGENTS[agentId]
-  if (known && known.fixedIndex < spots.length) {
-    assignments.set(agentId, known.fixedIndex)
-    return spots[known.fixedIndex]
-  }
-
-  // Unknown agents: find first unoccupied spot
-  const taken = new Set(assignments.values())
-  for (let i = 0; i < spots.length; i++) {
-    if (!taken.has(i)) {
-      assignments.set(agentId, i)
-      return spots[i]
-    }
-  }
-  // Overflow — offset to prevent overlap
-  const overflowIdx = assignments.size
-  const baseIdx = overflowIdx % spots.length
-  assignments.set(agentId, spots.length + overflowIdx)
-  const [bx, by] = spots[baseIdx]
-  return [bx + 1.5, by + 1.5]
-}
-
+// ── Cubicle assignment ──
+// UNIFIED OFFICE — no zones, every agent stays at their cubicle
 function getTargetTile(agent: AgentDef): [number, number] {
-  const zone = getZoneForState(agent.state)
-  if (zone === 'work') {
-    // Dynamic assignment — working agents fill consecutive cubicle positions
-    loungeAssignments.delete(agent.id)
-    bugAssignments.delete(agent.id)
-    return assignSpot(agent.id, CUBICLE_POSITIONS, workAssignments)
-  }
-  if (zone === 'bugs') {
-    workAssignments.delete(agent.id)
-    loungeAssignments.delete(agent.id)
-    return assignSpot(agent.id, BUG_SPOTS, bugAssignments)
-  }
-  // lounge (idle / offline)
-  workAssignments.delete(agent.id)
-  bugAssignments.delete(agent.id)
-  return assignSpot(agent.id, LOUNGE_SPOTS, loungeAssignments)
+  const known = KNOWN_AGENTS[agent.id]
+  const idx = known?.fixedIndex ?? 0
+  if (idx < CUBICLE_POSITIONS.length) return CUBICLE_POSITIONS[idx]
+  // Overflow safety
+  return CUBICLE_POSITIONS[idx % CUBICLE_POSITIONS.length]
 }
 
 function buildAgents(defs: AgentDef[]): AgentRuntime[] {
@@ -701,20 +598,11 @@ function buildAgents(defs: AgentDef[]): AgentRuntime[] {
   computeGridSize(defs.length)
   FLOOR_MAP = generateFloorMap()
   WALLS = generateWalls()
-  BUG_WORKSTATIONS = generateBugWorkstations()
-  BUG_SPOTS = generateBugSpots(defs.length)
   CUBICLE_POSITIONS = generateCubiclePositions(defs.length)
-  LOUNGE_SPOTS = generateLoungeSpots(defs.length)
-  console.log(`[Office] buildAgents: ${defs.length} agents, MAP ${MAP_COLS}x${MAP_ROWS}, FLOOR ${FLOOR_MAP.length}x${FLOOR_MAP[0]?.length ?? 0}, lounge rows ${LOUNGE_START_ROW}-${LOUNGE_END_ROW} (${LOUNGE_SPOTS.length} spots), work rows ${WORK_START_ROW}-${WORK_END_ROW} (${CUBICLE_POSITIONS.length} spots), error rows ${ERROR_START_ROW}-${ERROR_END_ROW} (${BUG_SPOTS.length} spots)`)
-  LOUNGE_SOFA_POSITIONS = LOUNGE_SPOTS.map(([c, r]): [number, number] => [c + 1, r - 1])
-  // Reset spot assignments — fresh every rebuild
-  workAssignments.clear()
-  loungeAssignments.clear()
-  bugAssignments.clear()
+  console.log(`[Office] buildAgents: ${defs.length} agents, MAP ${MAP_COLS}x${MAP_ROWS}, cubicles: ${CUBICLE_POSITIONS.length}`)
   return defs.map(def => {
-    const zone = getZoneForState(def.state)
     const [tx, ty] = getTargetTile(def)
-    return { def, x: tx, y: ty, tx, ty, zone }
+    return { def, x: tx, y: ty, tx, ty }
   })
 }
 
@@ -829,7 +717,14 @@ function loadSpritesForAgents(defs: AgentDef[]) {
     if (!cubicleSprites[agent.id]) {
       const img = new Image()
       img.onerror = () => { /* silent — no personalized cubicle */ }
-      img.src = `/assets/furniture/cubicle_${spriteId}.png`
+      // Try v3 personalized, then v3 variant, then legacy
+      img.onerror = () => {
+        const variants = ['standard', 'dev', 'minimal', 'creative']
+        const variant = variants[Object.keys(cubicleSprites).length % variants.length]
+        img.onerror = null
+        img.src = `/assets/furniture/v3/cubicle_${variant}.png`
+      }
+      img.src = `/assets/furniture/v3/cubicle_${spriteId}.png`
       cubicleSprites[agent.id] = img
     }
 
@@ -1253,10 +1148,8 @@ function drawAgent(
   const sy = oy + iy
 
   const isOffline = agent.def.state === 'offline'
-  const isInLounge = agent.zone === 'lounge'
   if (isOffline) ctx.globalAlpha = 0.4
-  // Sitting offset — agents in lounge are "sitting" on sofas (drawn lower)
-  const sitOffset = isInLounge ? 4 : 0
+  const sitOffset = 0
 
   // Selection / hover ring
   if (isSelected || isHover) {
@@ -1276,8 +1169,8 @@ function drawAgent(
   // Breathing disabled — caused sub-pixel flicker on pixel art sprites
   const breathOffset = 0
 
-  // Draw personalized cubicle backdrop when agent is at their work desk
-  const isAtDesk = agent.zone === 'work' && Math.abs(agent.x - agent.tx) < 0.5 && Math.abs(agent.y - agent.ty) < 0.5
+  // Draw personalized cubicle backdrop when agent is at their desk
+  const isAtDesk = Math.abs(agent.x - agent.tx) < 0.5 && Math.abs(agent.y - agent.ty) < 0.5
   const cubicleImg = cubicleSprites[agent.def.id]
   if (isAtDesk && cubicleImg?.complete && cubicleImg.naturalWidth > 0) {
     const cubDrawX = Math.round(sx - SPRITE_DISPLAY / 2)
@@ -1291,18 +1184,15 @@ function drawAgent(
     ctx.imageSmoothingEnabled = true
   }
 
-  // Determine pose based on zone and movement
+  // Determine pose — all agents use idle (unified office, no zone-based poses)
   const isMoving = Math.abs(agent.x - agent.tx) > 0.5 || Math.abs(agent.y - agent.ty) > 0.5
-  const pose: 'idle' | 'sitting-work' | 'sitting-lounge' | 'walk' = isMoving ? 'walk'
-    : agent.zone === 'work' ? 'sitting-work'
-    : agent.zone === 'lounge' ? 'sitting-lounge'
-    : 'idle'
+  const pose: 'idle' | 'walk' = isMoving ? 'walk' : 'idle'
 
   // Walk sprite — use when moving, fall back to idle
   const walkImg = walkSprites[agent.def.id]
   const useWalk = pose === 'walk' && walkImg?.complete && walkImg.naturalWidth > 0
 
-  const img = useWalk ? walkImg : getSpriteForAgent(agent.def.id, pose === 'walk' ? 'idle' : pose)
+  const img = useWalk ? walkImg : getSpriteForAgent(agent.def.id, 'idle')
   if (img) {
     let srcX: number
     let srcY = 0
@@ -1326,7 +1216,7 @@ function drawAgent(
       }
     } else {
       // Non-walk sprite (idle/sitting)
-      fps = pose === 'sitting-work' ? 4 : pose === 'sitting-lounge' ? 2 : (agent.def.state === 'working' || agent.def.state === 'active') ? 8 : 4
+      fps = (agent.def.state === 'working' || agent.def.state === 'active') ? 8 : 4
       maxFrames = Math.max(1, Math.floor(img.naturalWidth / SPRITE_SIZE))
       const frame = Math.floor(t * fps) % maxFrames
       srcX = frame * SPRITE_SIZE
@@ -1533,6 +1423,31 @@ function drawAgent(
     }
   }
 
+  // ── Status indicator above head ──
+  const indicatorY = sy - SPRITE_DISPLAY - 8
+
+  if (agent.def.state === 'error') {
+    // Red error icon ❌ above head
+    ctx.save()
+    ctx.font = 'bold 16px sans-serif'
+    ctx.textAlign = 'center'
+    ctx.fillStyle = '#ff4444'
+    ctx.shadowColor = 'rgba(255,0,0,0.6)'
+    ctx.shadowBlur = 8
+    ctx.fillText('❌', sx, indicatorY)
+    ctx.restore()
+  } else if (agent.def.state === 'idle') {
+    // Subtle idle indicator — small zzz
+    const zAlpha = 0.3 + 0.2 * Math.sin(t * 0.002)
+    ctx.save()
+    ctx.globalAlpha = zAlpha
+    ctx.font = '10px sans-serif'
+    ctx.textAlign = 'center'
+    ctx.fillStyle = '#aaa'
+    ctx.fillText('💤', sx + 12, indicatorY)
+    ctx.restore()
+  }
+
   ctx.globalAlpha = 1
 }
 
@@ -1593,16 +1508,18 @@ function drawScene(
   ctx.textAlign = 'center'
   ctx.fillText('🏢 Virtual Office', w / 2, 28)
 
-  // Zone labels — centered in each horizontal zone
+  // Area labels — reception at top, coffee corner bottom-left, meeting room bottom-right
   ctx.font = `${f.zone}px "Heebo", "Segoe UI", sans-serif`
-  ctx.fillStyle = 'rgba(255,255,255,0.25)'
+  ctx.fillStyle = 'rgba(255,255,255,0.2)'
   const midCol = MAP_COLS / 2
-  const [lx, ly] = toIso(midCol, LOUNGE_START_ROW)
-  ctx.fillText('☕ Lounge', ox + lx, oy + ly - 10)
-  const [wx, wy] = toIso(midCol, WORK_START_ROW)
-  ctx.fillText('💻 Work Zone', ox + wx, oy + wy - 10)
-  const [bx, by] = toIso(midCol, ERROR_START_ROW)
-  ctx.fillText('🐛 Errors', ox + bx, oy + by - 10)
+  const [rx, ry] = toIso(midCol, 1)
+  ctx.fillText('📋 קבלה', ox + rx, oy + ry - 6)
+  // Coffee corner label
+  const [cx, cy] = toIso(2, MAP_ROWS - 4)
+  ctx.fillText('☕', ox + cx, oy + cy - 6)
+  // Meeting room label
+  const [mx, my] = toIso(MAP_COLS - 4, MAP_ROWS - 4)
+  ctx.fillText('🏢', ox + mx, oy + my - 6)
 
   // --- Floor tilemap --- (use FLOOR_MAP dimensions, not MAP_ROWS/COLS, to avoid stale mismatch)
   for (let row = 0; row < FLOOR_MAP.length; row++) {
@@ -1647,56 +1564,41 @@ function drawScene(
 
   // (sofas removed per Tal's request)
   // Coffee area in bottom-right empty space
-  drawables.push({ sortY: MAP_COLS - 4 + MAP_ROWS - 3, draw: () => drawCoffeeTable(ctx, ox, oy, MAP_COLS - 4, MAP_ROWS - 3) })
-  drawables.push({ sortY: MAP_COLS - 3 + MAP_ROWS - 2, draw: () => drawCoffeeMachine(ctx, ox, oy, MAP_COLS - 3, MAP_ROWS - 2) })
+  // Coffee corner furniture (bottom-left)
+  drawables.push({ sortY: 2 + (MAP_ROWS - 3), draw: () => drawCoffeeTable(ctx, ox, oy, 2, MAP_ROWS - 3) })
+  drawables.push({ sortY: 1 + (MAP_ROWS - 2), draw: () => drawCoffeeMachine(ctx, ox, oy, 1, MAP_ROWS - 2) })
 
-  // Draw name labels at each agent's FIXED work + lounge spot
+  // Draw name labels at each agent's cubicle
   const allDefs = allAgentDefs ?? []
   for (let defIdx = 0; defIdx < allDefs.length; defIdx++) {
     const def = allDefs[defIdx]
     const known = KNOWN_AGENTS[def.id]
     const idx = known?.fixedIndex ?? defIdx
 
-    // Work spot label (cubicle) — small tag below the tile
     if (idx < CUBICLE_POSITIONS.length) {
       const [wc, wr] = CUBICLE_POSITIONS[idx]
       const [wix, wiy] = toIso(wc, wr)
       const wsx = ox + wix
       const wsy = oy + wiy
-      const isHere = getZoneForState(def.state) === 'work'
+      const stateColor = STATE_META[def.state]?.color || '#888'
       drawables.push({ sortY: wc + wr - 0.2, draw: () => {
-        // Background pill for readability
         ctx.font = '9px "Heebo", "Segoe UI", sans-serif'
         ctx.textAlign = 'center'
         const label = def.name
-        const tw = ctx.measureText(label).width + 12
-        ctx.fillStyle = isHere ? 'rgba(0,230,118,0.15)' : 'rgba(0,0,0,0.3)'
+        const tw = ctx.measureText(label).width + 18
+        // Status-colored pill
+        ctx.fillStyle = `${stateColor}25`
         ctx.beginPath()
         ctx.roundRect(wsx - tw / 2, wsy + 22, tw, 16, 4)
         ctx.fill()
-        ctx.fillStyle = isHere ? 'rgba(255,255,255,0.7)' : 'rgba(255,255,255,0.25)'
-        ctx.fillText(label, wsx, wsy + 34)
-      }})
-    }
-
-    // Lounge spot label — small tag below the tile
-    if (idx < LOUNGE_SPOTS.length) {
-      const [lc, lr] = LOUNGE_SPOTS[idx]
-      const [lix, liy] = toIso(lc, lr)
-      const lsx = ox + lix
-      const lsy = oy + liy
-      const isHere = getZoneForState(def.state) === 'lounge'
-      drawables.push({ sortY: lc + lr - 0.2, draw: () => {
-        ctx.font = '9px "Heebo", "Segoe UI", sans-serif'
-        ctx.textAlign = 'center'
-        const label = def.name
-        const tw = ctx.measureText(label).width + 12
-        ctx.fillStyle = isHere ? 'rgba(58,40,32,0.5)' : 'rgba(0,0,0,0.3)'
+        // Status dot
         ctx.beginPath()
-        ctx.roundRect(lsx - tw / 2, lsy + 22, tw, 16, 4)
+        ctx.arc(wsx + tw / 2 - 8, wsy + 30, 3, 0, Math.PI * 2)
+        ctx.fillStyle = stateColor
         ctx.fill()
-        ctx.fillStyle = isHere ? 'rgba(255,255,255,0.7)' : 'rgba(255,255,255,0.25)'
-        ctx.fillText(label, lsx, lsy + 34)
+        // Name text
+        ctx.fillStyle = def.state === 'offline' ? 'rgba(255,255,255,0.3)' : 'rgba(255,255,255,0.75)'
+        ctx.fillText(label, wsx - 2, wsy + 34)
       }})
     }
   }
@@ -1716,14 +1618,17 @@ function drawScene(
     // Use generic cubicle.png as fallback
     if (!genericCubicleImg) {
       genericCubicleImg = new Image()
-      genericCubicleImg.src = '/assets/furniture/cubicle.png'
+      genericCubicleImg.src = '/assets/furniture/v3/cubicle_standard.png'
     }
     const img = (cubImg?.complete && cubImg.naturalWidth > 0) ? cubImg : genericCubicleImg
+    const cubSrcSize = img?.naturalWidth || 128 // v3 cubicles are 128x128
+    const cubDisplaySize = SPRITE_DISPLAY * 1.5 // 96px display — larger than agent sprites
     drawables.push({ sortY: cc + cr - 0.1, draw: () => {
       if (img?.complete && img.naturalWidth > 0) {
         ctx.imageSmoothingEnabled = false
-        ctx.drawImage(img, 0, 0, SPRITE_SIZE, SPRITE_SIZE,
-          Math.round(csx - SPRITE_DISPLAY / 2), Math.round(csy - SPRITE_DISPLAY + 8), SPRITE_DISPLAY, SPRITE_DISPLAY)
+        ctx.drawImage(img,
+          0, 0, cubSrcSize, cubSrcSize,
+          Math.round(csx - cubDisplaySize / 2), Math.round(csy - cubDisplaySize + 16), cubDisplaySize, cubDisplaySize)
         ctx.imageSmoothingEnabled = true
       }
     }})
@@ -2344,7 +2249,7 @@ export default function App() {
           if (newState !== a.def.state) {
             const oldState = a.def.state
             a.def.state = newState
-            a.zone = getZoneForState(newState)
+            // Unified office — agents stay at their cubicle, no zone change
             const [tx, ty] = getTargetTile(a.def)
             a.tx = tx
             a.ty = ty
@@ -3249,8 +3154,7 @@ export default function App() {
                 </span>
               </div>
               <div style={{ fontSize: 11, color: '#888', display: 'flex', gap: 8, marginTop: 2 }}>
-                <span>{getZoneForState(selectedAgent.state) === 'work' ? '💻 עבודה'
-                  : getZoneForState(selectedAgent.state) === 'bugs' ? '🐛 באגים' : '☕ מנוחה'}</span>
+                <span>🏢 משרד</span>
                 {selectedAgent.lastUpdated && <span>🕐 {timeAgo(selectedAgent.lastUpdated)}</span>}
               </div>
             </div>
