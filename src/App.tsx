@@ -1983,7 +1983,14 @@ export default function App() {
   const [agentDefs, setAgentDefs] = useState<AgentDef[]>(DEFAULT_AGENT_DEFS)
   const agentDefsRef = useRef<AgentDef[]>(agentDefs)
   agentDefsRef.current = agentDefs
-  const agentsRef = useRef<AgentRuntime[]>(buildAgents(DEFAULT_AGENT_DEFS))
+  // Lazy init — buildAgents has side effects (mutates MAP_COLS/MAP_ROWS/FLOOR_MAP)
+  // useRef(expr) evaluates expr on EVERY render, so we must guard against repeated calls
+  const agentsInitializedRef = useRef(false)
+  const agentsRef = useRef<AgentRuntime[]>([])
+  if (!agentsInitializedRef.current) {
+    agentsInitializedRef.current = true
+    agentsRef.current = buildAgents(DEFAULT_AGENT_DEFS)
+  }
   const animRef = useRef<number>(0)
   const originRef = useRef<{ ox: number; oy: number }>({ ox: 0, oy: 0 })
 
