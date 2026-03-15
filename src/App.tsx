@@ -764,6 +764,12 @@ const spriteFrameCounts: Record<string, number> = {}
 const sittingSprites: Record<string, HTMLImageElement> = {}
 const sittingFrameCounts: Record<string, number> = {}
 
+// Walk sprites — 192×64 spritesheets (6 frames × 2 rows: SE top, SW bottom)
+// Some agents have 192×32 (single row, SE only)
+const walkSprites: Record<string, HTMLImageElement> = {}
+const walkFrameCounts: Record<string, number> = {}
+const walkHasSwRow: Record<string, boolean> = {} // true if sprite has 2 rows (64px height)
+
 const SPRITE_ALIASES: Record<string, string> = { main: 'yogi' }
 
 function loadSpritesForAgents(defs: AgentDef[]) {
@@ -813,6 +819,20 @@ function loadSpritesForAgents(defs: AgentDef[]) {
       img.onerror = () => { /* silent — fallback to idle */ }
       img.src = `/assets/characters/${spriteId}-sitting-lounge.png`
       sittingSprites[loungeKey] = img
+    }
+
+    // Load walk sprite
+    if (!walkSprites[agent.id]) {
+      const img = new Image()
+      img.onload = () => {
+        if (img.naturalWidth > 0) {
+          walkFrameCounts[agent.id] = Math.max(1, Math.floor(img.naturalWidth / SPRITE_SIZE))
+          walkHasSwRow[agent.id] = img.naturalHeight >= SPRITE_SIZE * 2
+        }
+      }
+      img.onerror = () => { /* silent — fallback to idle */ }
+      img.src = `/assets/characters/${spriteId}-walk.png`
+      walkSprites[agent.id] = img
     }
   })
 }
@@ -1246,19 +1266,44 @@ function drawAgent(
 
   // Determine pose based on zone and movement
   const isMoving = Math.abs(agent.x - agent.tx) > 0.5 || Math.abs(agent.y - agent.ty) > 0.5
-  const pose: 'idle' | 'sitting-work' | 'sitting-lounge' = isMoving ? 'idle'
+  const pose: 'idle' | 'sitting-work' | 'sitting-lounge' | 'walk' = isMoving ? 'walk'
     : agent.zone === 'work' ? 'sitting-work'
     : agent.zone === 'lounge' ? 'sitting-lounge'
     : 'idle'
 
-  const img = getSpriteForAgent(agent.def.id, pose)
+  // Walk sprite — use when moving, fall back to idle
+  const walkImg = walkSprites[agent.def.id]
+  const useWalk = pose === 'walk' && walkImg?.complete && walkImg.naturalWidth > 0
+
+  const img = useWalk ? walkImg : getSpriteForAgent(agent.def.id, pose === 'walk' ? 'idle' : pose)
   if (img) {
-    // Sprite rendering from spritesheet
-    const fps = pose === 'sitting-work' ? 4 : pose === 'sitting-lounge' ? 2 : (agent.def.state === 'working' || agent.def.state === 'active') ? 8 : 4
-    // Auto-detect frame count from sprite width
-    const maxFrames = Math.max(1, Math.floor(img.naturalWidth / SPRITE_SIZE))
-    const frame = Math.floor(t * fps) % maxFrames
-    const srcX = frame * SPRITE_SIZE
+    let srcX: number
+    let srcY = 0
+    let maxFrames: number
+    let fps: number
+
+    if (useWalk) {
+      // Walk sprite: 6 frames per row, row 0 = SE, row 1 = SW
+      fps = 8
+      maxFrames = walkFrameCounts[agent.def.id] ?? 6
+      const frame = Math.floor(t * fps) % maxFrames
+      srcX = frame * SPRITE_SIZE
+
+      // Direction: determine from movement vector
+      // In isometric: moving right = SE (+x), moving left = SW (-x or +y)
+      const dx = agent.tx - agent.x
+      const dy = agent.ty - agent.y
+      const movingSW = dx < -0.1 || (Math.abs(dx) < 0.1 && dy > 0.1)
+      if (movingSW && walkHasSwRow[agent.def.id]) {
+        srcY = SPRITE_SIZE // Second row = SW direction
+      }
+    } else {
+      // Non-walk sprite (idle/sitting)
+      fps = pose === 'sitting-work' ? 4 : pose === 'sitting-lounge' ? 2 : (agent.def.state === 'working' || agent.def.state === 'active') ? 8 : 4
+      maxFrames = Math.max(1, Math.floor(img.naturalWidth / SPRITE_SIZE))
+      const frame = Math.floor(t * fps) % maxFrames
+      srcX = frame * SPRITE_SIZE
+    }
 
     // Math.round prevents sub-pixel blur on pixel art
     const drawX = Math.round(sx - SPRITE_DISPLAY / 2)
@@ -1267,7 +1312,7 @@ function drawAgent(
     ctx.imageSmoothingEnabled = false
     ctx.drawImage(
       img,
-      srcX, 0, SPRITE_SIZE, SPRITE_SIZE,
+      srcX, srcY, SPRITE_SIZE, SPRITE_SIZE,
       drawX, drawY, SPRITE_DISPLAY, SPRITE_DISPLAY,
     )
     ctx.imageSmoothingEnabled = true
