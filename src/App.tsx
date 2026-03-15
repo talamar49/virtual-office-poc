@@ -187,81 +187,172 @@ interface AgentDef {
   tokenUsage?: number // total tokens used (from session data)
 }
 
+// ── Movement path — L-shaped waypoint-based pathfinding ──
+interface MovementPath {
+  waypoints: [number, number][]
+  currentWaypoint: number
+}
+
 interface AgentRuntime {
   def: AgentDef
   x: number
   y: number
   tx: number
   ty: number
-  zone: Zone
+  room: RoomId  // current room assignment
+  path: MovementPath | null  // active walk path (null = at destination)
 }
 
-type Zone = 'work' | 'lounge' | 'bugs'
+const AGENT_MOVE_SPEED = 3 // tiles per second
+
+// ── Room system ──
+type RoomId = 'reception' | 'dev' | 'openspace' | 'biz' | 'qa' | 'meeting' | 'lounge' | 'manager'
+
+interface Room {
+  id: RoomId
+  label: string
+  emoji: string
+  sign: string          // sign text displayed on the wall
+  floorType: number     // index into FLOOR_STYLES
+  startCol: number
+  endCol: number
+  startRow: number
+  endRow: number
+  seats: [number, number][]  // cubicle/seat positions within the room
+  loungeSeats?: [number, number][] // sofa positions (lounge only)
+}
+
+// Team assignments — which agents belong to which work room
+const TEAM_ROOMS: Record<string, RoomId> = {
+  omer: 'dev', noa: 'dev', gil: 'dev',
+  itai: 'openspace', alon: 'openspace', ido: 'openspace',
+  lior: 'biz', tomer: 'biz', dana: 'biz', roni: 'biz',
+  michal: 'qa',
+  yogi: 'manager',
+}
+
+// Default room for unknown agents
+function getWorkRoom(agentId: string): RoomId {
+  return TEAM_ROOMS[agentId] || 'openspace'
+}
+
+// Room definitions — fixed layout
+const ROOMS: Room[] = [
+  { id: 'reception', label: 'קבלה', emoji: '📋', sign: 'OpenClaw HQ',
+    floorType: 4, startCol: 0, endCol: 20, startRow: 0, endRow: 2, seats: [] },
+  { id: 'dev', label: 'Dev Team', emoji: '💻', sign: '⚡ Dev Team',
+    floorType: 5, startCol: 0, endCol: 5, startRow: 3, endRow: 9,
+    seats: [[1, 4], [1, 7], [3, 4]] },
+  { id: 'openspace', label: 'Open Space', emoji: '🏢', sign: '',
+    floorType: 0, startCol: 6, endCol: 14, startRow: 3, endRow: 9,
+    seats: [[7, 4], [7, 7], [10, 4], [10, 7], [13, 4], [13, 7]] },
+  { id: 'biz', label: 'Business', emoji: '📈', sign: '📊 Business',
+    floorType: 6, startCol: 15, endCol: 20, startRow: 3, endRow: 9,
+    seats: [[16, 4], [16, 7], [18, 4], [18, 7]] },
+  { id: 'qa', label: 'QA Lab', emoji: '🔍', sign: '🔍 QA Lab',
+    floorType: 7, startCol: 0, endCol: 5, startRow: 10, endRow: 13,
+    seats: [[1, 11], [3, 11]] },
+  { id: 'meeting', label: 'Meeting Room', emoji: '🏢', sign: '',
+    floorType: 3, startCol: 15, endCol: 20, startRow: 10, endRow: 13, seats: [] },
+  { id: 'lounge', label: 'Lounge', emoji: '☕', sign: '☕ Lounge',
+    floorType: 2, startCol: 0, endCol: 14, startRow: 14, endRow: 19,
+    seats: [], loungeSeats: [[2, 15], [2, 17], [5, 15], [5, 17], [8, 15], [8, 17], [11, 15], [11, 17]] },
+  { id: 'manager', label: 'Manager', emoji: '🐻', sign: '',
+    floorType: 8, startCol: 15, endCol: 20, startRow: 14, endRow: 19,
+    seats: [[17, 16]] },
+]
+
+const ROOM_MAP = new Map<RoomId, Room>(ROOMS.map(r => [r.id, r]))
+
+function getRoomAt(col: number, row: number): Room | undefined {
+  for (const r of ROOMS) {
+    if (col >= r.startCol && col <= r.endCol && row >= r.startRow && row <= r.endRow) return r
+  }
+  return undefined
+}
 
 // ── Isometric constants ──
 const TILE_W = 64
 const TILE_H = 32
-const BASE_MAP_COLS = 20
-const BASE_MAP_ROWS = 16
 const SPRITE_SIZE = 32
-const SPRITE_DISPLAY = 64 // 2x scale
+const SPRITE_DISPLAY = 64
 
-// Dynamic grid — expands with agent count (supports up to 50+)
-let MAP_COLS = BASE_MAP_COLS
-let MAP_ROWS = BASE_MAP_ROWS
+// Fixed map size for room-based layout
+let MAP_COLS = 21
+let MAP_ROWS = 20
 
-/**
- * HORIZONTAL ZONE LAYOUT (top to bottom):
- *   ☕ Lounge (top)   — idle/offline agents
- *   💻 Work (middle)  — active/working agents
- *   🐛 Errors (bottom) — error state agents (thin strip)
- *
- * All zones span full width. Height grows dynamically with agent count.
- */
-const COLS_PER_AGENT = 4   // horizontal spacing between agents
-const ROWS_PER_AGENT = 4   // vertical spacing between agents
+// Agent spacing within rooms
+const COLS_PER_AGENT = 3
+const ROWS_PER_AGENT = 3
 
-// Dynamic — updated in computeGridSize
-let AGENTS_PER_ROW = 4
-let LOUNGE_START_ROW = 1
-let LOUNGE_END_ROW = 5
-let WORK_START_ROW = 6
-let WORK_END_ROW = 10
-let ERROR_START_ROW = 11
-let ERROR_END_ROW = 13
+// ── Lounge spot assignment ──
+const loungeAssignments: Map<string, number> = new Map()
 
-function getAgentsPerRow(agentCount: number): number {
-  if (agentCount <= 6) return 3
-  if (agentCount <= 12) return 4
-  if (agentCount <= 20) return 5
-  if (agentCount <= 30) return 6
-  if (agentCount <= 42) return 7
-  return 8  // 50+ agents
+function assignLoungeSpot(agentId: string): [number, number] {
+  const lounge = ROOM_MAP.get('lounge')!
+  const spots = lounge.loungeSeats!
+  // Already assigned?
+  const existing = loungeAssignments.get(agentId)
+  if (existing !== undefined && existing < spots.length) return spots[existing]
+  // Find free spot
+  const taken = new Set(loungeAssignments.values())
+  for (let i = 0; i < spots.length; i++) {
+    if (!taken.has(i)) { loungeAssignments.set(agentId, i); return spots[i] }
+  }
+  // Overflow — stack with offset
+  const idx = loungeAssignments.size % spots.length
+  loungeAssignments.set(agentId, spots.length + loungeAssignments.size)
+  return [spots[idx][0] + 1, spots[idx][1]]
 }
-function computeGridSize(agentCount: number) {
-  const n = Math.max(agentCount, 1)
-  AGENTS_PER_ROW = getAgentsPerRow(n)
 
-  // All zones span full width
-  const zoneWidth = AGENTS_PER_ROW * COLS_PER_AGENT + 2
+function releaseLoungeSpot(agentId: string) {
+  loungeAssignments.delete(agentId)
+}
 
-  // Lounge zone (top) — room for ALL agents (worst case: all idle)
-  const loungeAgentRows = Math.ceil(n / AGENTS_PER_ROW)
-  LOUNGE_START_ROW = 1
-  LOUNGE_END_ROW = LOUNGE_START_ROW + loungeAgentRows * ROWS_PER_AGENT + 1
+// ── Pathfinding (L-shape: horizontal then vertical) ──
+function findPath(from: [number, number], to: [number, number]): [number, number][] {
+  const [fx, fy] = from
+  const [tx, ty] = to
+  // L-shape: go horizontal first, then vertical (avoids walls between rooms)
+  const midPoint: [number, number] = [tx, fy]
+  const path: [number, number][] = []
+  // Horizontal leg
+  const dx = tx > fx ? 1 : -1
+  for (let x = fx; x !== tx; x += dx) path.push([x, fy])
+  // Vertical leg
+  const dy = ty > fy ? 1 : -1
+  for (let y = fy; y !== ty; y += dy) path.push([tx, y])
+  path.push(to)
+  return path
+}
 
-  // Work zone (middle) — room for ALL agents
-  const workAgentRows = Math.ceil(n / AGENTS_PER_ROW)
-  WORK_START_ROW = LOUNGE_END_ROW + 1
-  WORK_END_ROW = WORK_START_ROW + workAgentRows * ROWS_PER_AGENT + 1
+// ── Get target tile based on state ──
+function getTargetTileForAgent(agentId: string, state: AgentState): { pos: [number, number]; room: RoomId } {
+  // Idle/offline → lounge
+  if (state === 'idle' || state === 'offline') {
+    const pos = assignLoungeSpot(agentId)
+    return { pos, room: 'lounge' }
+  }
+  // Working/active/error → assigned work room cubicle
+  releaseLoungeSpot(agentId)
+  const roomId = getWorkRoom(agentId)
+  const room = ROOM_MAP.get(roomId)!
+  const known = KNOWN_AGENTS[agentId]
+  const idx = known?.fixedIndex ?? 0
+  if (room.seats.length > 0) {
+    const seat = room.seats[idx % room.seats.length]
+    return { pos: seat, room: roomId }
+  }
+  // Fallback — room center
+  const cx = Math.floor((room.startCol + room.endCol) / 2)
+  const cy = Math.floor((room.startRow + room.endRow) / 2)
+  return { pos: [cx, cy], room: roomId }
+}
 
-  // Error zone (bottom) — thin strip, max 1-2 rows of agents
-  const errorAgentRows = Math.max(1, Math.ceil(Math.min(n, AGENTS_PER_ROW * 2) / AGENTS_PER_ROW))
-  ERROR_START_ROW = WORK_END_ROW + 1
-  ERROR_END_ROW = ERROR_START_ROW + errorAgentRows * ROWS_PER_AGENT
-
-  MAP_COLS = Math.max(BASE_MAP_COLS, zoneWidth)
-  MAP_ROWS = Math.max(BASE_MAP_ROWS, ERROR_END_ROW + 1)
+function computeGridSize(_agentCount: number) {
+  // Fixed layout — rooms don't resize
+  MAP_COLS = 21
+  MAP_ROWS = 20
 }
 
 // ── Responsive breakpoints ──
@@ -341,26 +432,14 @@ function toIso(cx: number, cy: number): [number, number] {
 }
 
 // ── Zone definitions (in tile coords) — uses dynamic grid size ──
-function getZoneAt(col: number, row: number): Zone {
-  // Horizontal zones: top=lounge, middle=work, bottom=errors
-  if (row >= ERROR_START_ROW) return 'bugs'
-  if (row >= WORK_START_ROW) return 'work'
-  return 'lounge'
-}
-
-// ── Tilemap — dynamically generated ──
-// 0 = wood floor, 1 = stone floor, 2 = carpet, 3 = dark floor (bug zone)
-
-/** Generate floor map for current MAP_COLS × MAP_ROWS */
+// ── Tilemap — room-based floor types ──
 function generateFloorMap(): number[][] {
   const map: number[][] = []
   for (let row = 0; row < MAP_ROWS; row++) {
     const r: number[] = []
     for (let col = 0; col < MAP_COLS; col++) {
-      const zone = getZoneAt(col, row)
-      if (zone === 'lounge') r.push(2)       // carpet/lounge
-      else if (zone === 'bugs') r.push(3)    // dark/bug zone
-      else r.push(0)                          // work zone
+      const room = getRoomAt(col, row)
+      r.push(room?.floorType ?? 0)
     }
     map.push(r)
   }
@@ -369,13 +448,17 @@ function generateFloorMap(): number[][] {
 
 let FLOOR_MAP = generateFloorMap()
 
-// Floor tile colors (2 shades each for checkerboard pattern)
-// Distinct colors per zone — easy to see where each zone is
+// Floor tile colors per room type (2 shades for checkerboard)
 const FLOOR_STYLES: Record<number, [string, string]> = {
-  0: ['#2a1f14', '#332618'],  // work zone — warm wood
-  1: ['#1a3040', '#1e3848'],  // stone — cool blue-gray
-  2: ['#3a2820', '#422e24'],  // lounge — carpet brown
-  3: ['#3a1a1a', '#421e1e'],  // bug zone — dark red
+  0: ['#3d2f20', '#44352a'],  // Open Space — warm parquet
+  1: ['#1a3040', '#1e3848'],  // stone (unused default)
+  2: ['#3a2820', '#422e24'],  // Lounge — cozy carpet brown
+  3: ['#1e1e30', '#242440'],  // Meeting Room — dark blue
+  4: ['#b8b0a8', '#ada59c'],  // Reception — light marble
+  5: ['#1a1a2e', '#1e1e34'],  // Dev Room — dark, monitor glow
+  6: ['#2a3025', '#303828'],  // Business Wing — corporate green-gray
+  7: ['#2a2a35', '#303040'],  // QA Corner — lab gray
+  8: ['#2a2420', '#322c26'],  // Manager — warm dark
 }
 
 // Wall tiles — positions along edges
@@ -412,20 +495,9 @@ function generateWalls(): WallTile[] {
 let WALLS = generateWalls()
 
 // ── Cubicle positions — generated dynamically based on agent count ──
-function generateCubiclePositions(count: number): [number, number][] {
-  const cols = Math.min(AGENTS_PER_ROW, Math.max(1, count))
-  const rows = Math.ceil(count / cols)
-  const positions: [number, number][] = []
-  for (let r = 0; r < rows; r++) {
-    for (let c = 0; c < cols && positions.length < count; c++) {
-      positions.push([1 + c * COLS_PER_AGENT, WORK_START_ROW + 1 + r * ROWS_PER_AGENT])
-    }
-  }
-  return positions
-}
-
-// Default cubicles (overridden when agents are discovered)
-let CUBICLE_POSITIONS: [number, number][] = generateCubiclePositions(12)
+// Cubicle positions are defined per-room in ROOMS[].seats
+// This flat list is built from all rooms for backward compatibility
+let CUBICLE_POSITIONS: [number, number][] = ROOMS.flatMap(r => r.seats)
 
 // Pan clamping
 function clampPan(pan: { x: number; y: number }) {
@@ -436,25 +508,7 @@ function clampPan(pan: { x: number; y: number }) {
   pan.y = Math.max(-maxY, Math.min(maxY, pan.y))
 }
 
-// ── Lounge furniture positions ──
-const SOFA_POSITIONS: [number, number][] = [
-]
-const COFFEE_TABLE: [number, number] = [2, 5]
-const COFFEE_MACHINE: [number, number] = [0, 0]
-
-// ── Bug zone workstation positions (dynamic) ──
-function generateBugWorkstations(): [number, number][] {
-  const startCol = Math.max(10, MAP_COLS - 6) + 1
-  const startRow = Math.max(8, MAP_ROWS - 4) + 1
-  return [
-    [startCol, startRow],
-    [startCol + 2, startRow],
-    [startCol + 1, startRow + 1],
-    [startCol, startRow + 2],
-    [startCol + 2, startRow + 2],
-  ]
-}
-let BUG_WORKSTATIONS = generateBugWorkstations()
+// (Furniture positions defined in room layout)
 
 // ── Decoration positions (Amir's assets) ──
 interface Decoration {
@@ -755,100 +809,8 @@ const STATE_META: Record<AgentState, { color: string; label: string; dot: string
 }
 
 // ── Zone assignment logic ──
-function getZoneForState(state: AgentState): Zone {
-  if (state === 'working' || state === 'active') return 'work'
-  if (state === 'error') return 'bugs'
-  return 'lounge'
-}
-
-// ── Lounge spots — horizontal zone at top ──
-function generateLoungeSpots(count: number): [number, number][] {
-  const spots: [number, number][] = []
-  const cols: number[] = []
-  for (let i = 0; i < AGENTS_PER_ROW; i++) cols.push(1 + i * COLS_PER_AGENT)
-  const rowsNeeded = Math.ceil(count / cols.length)
-  for (let r = 0; r < rowsNeeded; r++) {
-    for (const c of cols) {
-      if (spots.length >= count) break
-      spots.push([c, LOUNGE_START_ROW + 1 + r * ROWS_PER_AGENT])
-    }
-  }
-  return spots
-}
-
-let LOUNGE_SPOTS = generateLoungeSpots(12)
-// Sofa at every lounge spot
-// Sofas positioned 1 tile offset from agent spots (so agents sit beside, not on)
-let LOUNGE_SOFA_POSITIONS = LOUNGE_SPOTS.map(([c, r]): [number, number] => [c + 1, r - 1])
-
-// ── Bug zone spots (5 unique positions) ──
-// Bug zone spots — spaced out in the larger map
-// Bug zone spots — dynamically positioned in the bottom-right
-function generateBugSpots(count: number): [number, number][] {
-  const spots: [number, number][] = []
-  const cols: number[] = []
-  for (let i = 0; i < AGENTS_PER_ROW; i++) cols.push(1 + i * COLS_PER_AGENT)
-  const rowsNeeded = Math.max(1, Math.ceil(count / cols.length))
-  for (let r = 0; r < rowsNeeded; r++) {
-    for (const c of cols) {
-      if (spots.length >= count) break
-      spots.push([c, ERROR_START_ROW + 1 + r * ROWS_PER_AGENT])
-    }
-  }
-  return spots
-}
-let BUG_SPOTS = generateBugSpots(12)
-
-// Track which lounge/bug spots are taken (by agent id)
-const workAssignments: Map<string, number> = new Map()
-const loungeAssignments: Map<string, number> = new Map()
-const bugAssignments: Map<string, number> = new Map()
-
-function assignSpot(agentId: string, spots: [number, number][], assignments: Map<string, number>): [number, number] {
-  // Known agents ALWAYS go to their fixed index — no exceptions
-  const known = KNOWN_AGENTS[agentId]
-  if (known && known.fixedIndex < spots.length) {
-    assignments.set(agentId, known.fixedIndex)
-    return spots[known.fixedIndex]
-  }
-
-  // Unknown agents: find first unoccupied spot
-  const taken = new Set(assignments.values())
-  for (let i = 0; i < spots.length; i++) {
-    if (!taken.has(i)) {
-      assignments.set(agentId, i)
-      return spots[i]
-    }
-  }
-  // Overflow — offset to prevent overlap
-  const overflowIdx = assignments.size
-  const baseIdx = overflowIdx % spots.length
-  assignments.set(agentId, spots.length + overflowIdx)
-  const [bx, by] = spots[baseIdx]
-  return [bx + 1.5, by + 1.5]
-}
-
-function getTargetTile(agent: AgentDef): [number, number] {
-  const zone = getZoneForState(agent.state)
-  if (zone === 'work') {
-    // Dynamic assignment — working agents fill consecutive cubicle positions
-    loungeAssignments.delete(agent.id)
-    bugAssignments.delete(agent.id)
-    return assignSpot(agent.id, CUBICLE_POSITIONS, workAssignments)
-  }
-  if (zone === 'bugs') {
-    workAssignments.delete(agent.id)
-    loungeAssignments.delete(agent.id)
-    return assignSpot(agent.id, BUG_SPOTS, bugAssignments)
-  }
-  // lounge (idle / offline)
-  workAssignments.delete(agent.id)
-  bugAssignments.delete(agent.id)
-  return assignSpot(agent.id, LOUNGE_SPOTS, loungeAssignments)
-}
-
+// ── Room-based agent placement ──
 function buildAgents(defs: AgentDef[]): AgentRuntime[] {
-  // Assign stable fixedIndex to ALL agents based on sorted ID order
   const sortedIds = defs.map(d => d.id).sort()
   for (let i = 0; i < sortedIds.length; i++) {
     const id = sortedIds[i]
@@ -856,34 +818,25 @@ function buildAgents(defs: AgentDef[]): AgentRuntime[] {
       KNOWN_AGENTS[id].fixedIndex = i
     } else {
       KNOWN_AGENTS[id] = {
-        name: id,
-        role: 'Agent',
+        name: id, role: 'Agent',
         emoji: AGENT_EMOJIS[i % AGENT_EMOJIS.length],
         color: FALLBACK_COLORS[i % FALLBACK_COLORS.length],
-        frames: 6,
-        fixedIndex: i,
+        frames: 6, fixedIndex: i,
       }
     }
   }
 
-  // Expand grid dynamically based on agent count
   computeGridSize(defs.length)
   FLOOR_MAP = generateFloorMap()
   WALLS = generateWalls()
-  BUG_WORKSTATIONS = generateBugWorkstations()
-  BUG_SPOTS = generateBugSpots(defs.length)
-  CUBICLE_POSITIONS = generateCubiclePositions(defs.length)
-  LOUNGE_SPOTS = generateLoungeSpots(defs.length)
-  console.log(`[Office] buildAgents: ${defs.length} agents, MAP ${MAP_COLS}x${MAP_ROWS}, FLOOR ${FLOOR_MAP.length}x${FLOOR_MAP[0]?.length ?? 0}, lounge rows ${LOUNGE_START_ROW}-${LOUNGE_END_ROW} (${LOUNGE_SPOTS.length} spots), work rows ${WORK_START_ROW}-${WORK_END_ROW} (${CUBICLE_POSITIONS.length} spots), error rows ${ERROR_START_ROW}-${ERROR_END_ROW} (${BUG_SPOTS.length} spots)`)
-  LOUNGE_SOFA_POSITIONS = LOUNGE_SPOTS.map(([c, r]): [number, number] => [c + 1, r - 1])
-  // Reset spot assignments — fresh every rebuild
-  workAssignments.clear()
+  CUBICLE_POSITIONS = ROOMS.flatMap(r => r.seats)
   loungeAssignments.clear()
-  bugAssignments.clear()
+
+  console.log(`[Office] buildAgents: ${defs.length} agents, MAP ${MAP_COLS}x${MAP_ROWS}, rooms: ${ROOMS.map(r => r.id).join(', ')}`)
+
   return defs.map(def => {
-    const zone = getZoneForState(def.state)
-    const [tx, ty] = getTargetTile(def)
-    return { def, x: tx, y: ty, tx, ty, zone }
+    const { pos, room } = getTargetTileForAgent(def.id, def.state)
+    return { def, x: pos[0], y: pos[1], tx: pos[0], ty: pos[1], room, path: null }
   })
 }
 
@@ -1413,7 +1366,7 @@ function drawAgent(
   const sy = oy + iy
 
   const isOffline = agent.def.state === 'offline'
-  const isInLounge = agent.zone === 'lounge'
+  const isInLounge = agent.room === 'lounge'
   if (isOffline) ctx.globalAlpha = 0.4
   // Sitting offset — agents in lounge are "sitting" on sofas (drawn lower)
   const sitOffset = isInLounge ? 4 : 0
@@ -1439,8 +1392,8 @@ function drawAgent(
   // Determine pose based on zone and movement
   const isMoving = Math.abs(agent.x - agent.tx) > 0.5 || Math.abs(agent.y - agent.ty) > 0.5
   const pose: 'idle' | 'sitting-work' | 'sitting-lounge' | 'walk' = isMoving ? 'walk'
-    : agent.zone === 'work' ? 'sitting-work'
-    : agent.zone === 'lounge' ? 'sitting-lounge'
+    : agent.room === 'lounge' ? 'sitting-lounge'
+    : (agent.def.state === 'working' || agent.def.state === 'active') ? 'sitting-work'
     : 'idle'
 
   // Walk sprite — use when moving, fall back to idle
@@ -1461,10 +1414,10 @@ function drawAgent(
       const frame = Math.floor(t * fps) % maxFrames
       srcX = frame * SPRITE_SIZE
 
-      // Direction: determine from movement vector
-      // In isometric: moving right = SE (+x), moving left = SW (-x or +y)
-      const dx = agent.tx - agent.x
-      const dy = agent.ty - agent.y
+      // Direction: determine from movement toward current waypoint (or target)
+      const wp = agent.path?.waypoints[agent.path.currentWaypoint]
+      const dx = (wp ? wp[0] : agent.tx) - agent.x
+      const dy = (wp ? wp[1] : agent.ty) - agent.y
       const movingSW = dx < -0.1 || (Math.abs(dx) < 0.1 && dy > 0.1)
       if (movingSW && walkHasSwRow[agent.def.id]) {
         srcY = SPRITE_SIZE // Second row = SW direction
@@ -1704,7 +1657,7 @@ function getIsoBounds() {
 
 // ── Main scene drawing ──
 
-interface I18nLabels { loungeZone: string; workZone: string; errorZone: string; virtualOffice: string; active: string; working: string; idle: string; offline: string; error: string; editMode: string }
+interface I18nLabels { loungeZone?: string; workZone?: string; errorZone?: string; virtualOffice: string; active: string; working: string; idle: string; offline: string; error: string; editMode: string }
 function drawScene(
   ctx: CanvasRenderingContext2D,
   w: number, h: number,
@@ -1741,22 +1694,43 @@ function drawScene(
   const labels: I18nLabels = i18nLabels ?? { loungeZone: '☕ Lounge', workZone: '💻 Work Zone', errorZone: '🐛 Errors', virtualOffice: '🏢 Virtual Office', active: 'Active', working: 'Working', idle: 'Idle', offline: 'Offline', error: 'Error', editMode: 'Edit Mode' }
   ctx.fillText(labels.virtualOffice, w / 2, 28)
 
-  // Zone labels — centered in each horizontal zone
+  // Room signs — draw sign at each room's top-center
   ctx.font = `${f.zone}px "Heebo", "Segoe UI", sans-serif`
-  ctx.fillStyle = 'rgba(255,255,255,0.25)'
-  const midCol = MAP_COLS / 2
-  const [lx, ly] = toIso(midCol, LOUNGE_START_ROW)
-  ctx.fillText(labels.loungeZone, ox + lx, oy + ly - 10)
-  const [wx, wy] = toIso(midCol, WORK_START_ROW)
-  ctx.fillText(labels.workZone, ox + wx, oy + wy - 10)
-  const [bx, by] = toIso(midCol, ERROR_START_ROW)
-  ctx.fillText(labels.errorZone, ox + bx, oy + by - 10)
+  ctx.fillStyle = 'rgba(255,255,255,0.3)'
+  for (const room of ROOMS) {
+    if (!room.sign) continue
+    const signCol = (room.startCol + room.endCol) / 2
+    const signRow = room.startRow
+    const [sx, sy] = toIso(signCol, signRow)
+    ctx.fillText(room.sign, ox + sx, oy + sy - 6)
+  }
 
   // --- Floor tilemap --- (use FLOOR_MAP dimensions, not MAP_ROWS/COLS, to avoid stale mismatch)
   for (let row = 0; row < FLOOR_MAP.length; row++) {
     for (let col = 0; col < (FLOOR_MAP[row]?.length ?? 0); col++) {
       drawIsoTile(ctx, ox, oy, col, row, FLOOR_MAP[row][col])
     }
+  }
+
+  // --- Room borders — subtle lines between rooms ---
+  ctx.strokeStyle = 'rgba(255,255,255,0.08)'
+  ctx.lineWidth = 1
+  for (const room of ROOMS) {
+    if (room.id === 'reception') continue // no border for reception
+    const corners: [number, number][] = [
+      [room.startCol, room.startRow],
+      [room.endCol + 1, room.startRow],
+      [room.endCol + 1, room.endRow + 1],
+      [room.startCol, room.endRow + 1],
+    ]
+    ctx.beginPath()
+    corners.forEach((c, i) => {
+      const [px, py] = toIso(c[0], c[1])
+      if (i === 0) ctx.moveTo(ox + px, oy + py)
+      else ctx.lineTo(ox + px, oy + py)
+    })
+    ctx.closePath()
+    ctx.stroke()
   }
 
   // --- Edit mode: grid lines ---
@@ -1795,8 +1769,10 @@ function drawScene(
 
   // (sofas removed per Tal's request)
   // Coffee area in bottom-right empty space
-  drawables.push({ sortY: MAP_COLS - 4 + MAP_ROWS - 3, draw: () => drawCoffeeTable(ctx, ox, oy, MAP_COLS - 4, MAP_ROWS - 3) })
-  drawables.push({ sortY: MAP_COLS - 3 + MAP_ROWS - 2, draw: () => drawCoffeeMachine(ctx, ox, oy, MAP_COLS - 3, MAP_ROWS - 2) })
+  // Lounge furniture — coffee area
+  const lounge = ROOM_MAP.get('lounge')!
+  drawables.push({ sortY: lounge.startCol + 3 + lounge.startRow + 1, draw: () => drawCoffeeTable(ctx, ox, oy, lounge.startCol + 3, lounge.startRow + 1) })
+  drawables.push({ sortY: lounge.startCol + 1 + lounge.startRow + 1, draw: () => drawCoffeeMachine(ctx, ox, oy, lounge.startCol + 1, lounge.startRow + 1) })
 
   // Draw name labels at each agent's FIXED work + lounge spot
   const allDefs = allAgentDefs ?? []
@@ -1805,48 +1781,31 @@ function drawScene(
     const known = KNOWN_AGENTS[def.id]
     const idx = known?.fixedIndex ?? defIdx
 
-    // Work spot label (cubicle) — small tag below the tile
-    if (idx < CUBICLE_POSITIONS.length) {
-      const [wc, wr] = CUBICLE_POSITIONS[idx]
-      const [wix, wiy] = toIso(wc, wr)
-      const wsx = ox + wix
-      const wsy = oy + wiy
-      const isHere = getZoneForState(def.state) === 'work'
-      drawables.push({ sortY: wc + wr - 0.2, draw: () => {
-        // Background pill for readability
-        ctx.font = '9px "Heebo", "Segoe UI", sans-serif'
-        ctx.textAlign = 'center'
-        const label = def.name
-        const tw = ctx.measureText(label).width + 12
-        ctx.fillStyle = isHere ? 'rgba(0,230,118,0.15)' : 'rgba(0,0,0,0.3)'
-        ctx.beginPath()
-        ctx.roundRect(wsx - tw / 2, wsy + 22, tw, 16, 4)
-        ctx.fill()
-        ctx.fillStyle = isHere ? 'rgba(255,255,255,0.7)' : 'rgba(255,255,255,0.25)'
-        ctx.fillText(label, wsx, wsy + 34)
-      }})
-    }
-
-    // Lounge spot label — small tag below the tile
-    if (idx < LOUNGE_SPOTS.length) {
-      const [lc, lr] = LOUNGE_SPOTS[idx]
-      const [lix, liy] = toIso(lc, lr)
-      const lsx = ox + lix
-      const lsy = oy + liy
-      const isHere = getZoneForState(def.state) === 'lounge'
-      drawables.push({ sortY: lc + lr - 0.2, draw: () => {
-        ctx.font = '9px "Heebo", "Segoe UI", sans-serif'
-        ctx.textAlign = 'center'
-        const label = def.name
-        const tw = ctx.measureText(label).width + 12
-        ctx.fillStyle = isHere ? 'rgba(58,40,32,0.5)' : 'rgba(0,0,0,0.3)'
-        ctx.beginPath()
-        ctx.roundRect(lsx - tw / 2, lsy + 22, tw, 16, 4)
-        ctx.fill()
-        ctx.fillStyle = isHere ? 'rgba(255,255,255,0.7)' : 'rgba(255,255,255,0.25)'
-        ctx.fillText(label, lsx, lsy + 34)
-      }})
-    }
+    // Name plate at agent's work desk (permanent) — shows even when they're in lounge
+    const { pos: workPos } = getTargetTileForAgent(def.id, 'working')
+    const [wc, wr] = workPos
+    const [wix, wiy] = toIso(wc, wr)
+    const wsx = ox + wix
+    const wsy = oy + wiy
+    const isWorking = def.state === 'working' || def.state === 'active' || def.state === 'error'
+    const stateColor = STATE_META[def.state]?.color || '#888'
+    drawables.push({ sortY: wc + wr - 0.2, draw: () => {
+      ctx.font = '9px "Heebo", "Segoe UI", sans-serif'
+      ctx.textAlign = 'center'
+      const label = def.name
+      const tw = ctx.measureText(label).width + 18
+      ctx.fillStyle = isWorking ? `${stateColor}25` : 'rgba(0,0,0,0.25)'
+      ctx.beginPath()
+      ctx.roundRect(wsx - tw / 2, wsy + 22, tw, 16, 4)
+      ctx.fill()
+      // Status dot
+      ctx.beginPath()
+      ctx.arc(wsx + tw / 2 - 8, wsy + 30, 3, 0, Math.PI * 2)
+      ctx.fillStyle = stateColor
+      ctx.fill()
+      ctx.fillStyle = isWorking ? 'rgba(255,255,255,0.75)' : 'rgba(255,255,255,0.3)'
+      ctx.fillText(label, wsx - 2, wsy + 34)
+    }})
   }
 
   // Decorations (Amir's assets)
@@ -2502,10 +2461,18 @@ export default function App() {
           if (newState !== a.def.state) {
             const oldState = a.def.state
             a.def.state = newState
-            a.zone = getZoneForState(newState)
-            const [tx, ty] = getTargetTile(a.def)
-            a.tx = tx
-            a.ty = ty
+            const { pos: newPos, room: newRoom } = getTargetTileForAgent(a.def.id, newState)
+            a.room = newRoom
+            const [ntx, nty] = newPos
+            // Generate L-shaped walk path for smooth movement between rooms
+            if (Math.abs(a.x - ntx) > 0.5 || Math.abs(a.y - nty) > 0.5) {
+              a.path = {
+                waypoints: findPath([Math.round(a.x), Math.round(a.y)], [ntx, nty]),
+                currentWaypoint: 0,
+              }
+            }
+            a.tx = ntx
+            a.ty = nty
             defsChanged = true
 
             // Notification: agent finished working (working/active → idle/offline)
@@ -2619,18 +2586,44 @@ export default function App() {
         }
       }
 
-      // Lerp agents toward targets
+      // Move agents along paths (waypoint-based) or lerp to final target
       const agents = agentsRef.current
+      const deltaTime = 1 / 60 // ~60fps
       for (const a of agents) {
-        const dx = a.tx - a.x
-        const dy = a.ty - a.y
-        const dist = Math.sqrt(dx * dx + dy * dy)
-        if (dist > 0.5) {
-          a.x += dx * 0.08
-          a.y += dy * 0.08
+        if (a.path && a.path.currentWaypoint < a.path.waypoints.length) {
+          // Walk along waypoints at constant speed
+          const [wx, wy] = a.path.waypoints[a.path.currentWaypoint]
+          const dx = wx - a.x
+          const dy = wy - a.y
+          const dist = Math.sqrt(dx * dx + dy * dy)
+          if (dist < 0.15) {
+            // Reached waypoint — advance to next
+            a.path.currentWaypoint++
+            if (a.path.currentWaypoint >= a.path.waypoints.length) {
+              // Path complete — snap to final target
+              a.x = a.tx
+              a.y = a.ty
+              a.path = null
+            }
+          } else {
+            const step = AGENT_MOVE_SPEED * deltaTime
+            const move = Math.min(step, dist)
+            a.x += (dx / dist) * move
+            a.y += (dy / dist) * move
+          }
         } else {
-          a.x = a.tx
-          a.y = a.ty
+          // No path — lerp to target (fallback for initial placement)
+          const dx = a.tx - a.x
+          const dy = a.ty - a.y
+          const dist = Math.sqrt(dx * dx + dy * dy)
+          if (dist > 0.3) {
+            a.x += dx * 0.08
+            a.y += dy * 0.08
+          } else {
+            a.x = a.tx
+            a.y = a.ty
+            a.path = null
+          }
         }
       }
 
@@ -3474,8 +3467,7 @@ export default function App() {
                 </span>
               </div>
               <div style={{ fontSize: 11, color: '#888', display: 'flex', gap: 8, marginTop: 2 }}>
-                <span>{getZoneForState(selectedAgent.state) === 'work' ? t.workZone
-                  : getZoneForState(selectedAgent.state) === 'bugs' ? t.errorZone : t.loungeZone}</span>
+                <span>{(() => { const r = ROOM_MAP.get(getWorkRoom(selectedAgent.id)); return r ? `${r.emoji} ${r.label}` : '🏢 Office' })()}</span>
                 {selectedAgent.lastUpdated && <span>🕐 {timeAgo(selectedAgent.lastUpdated)}</span>}
               </div>
             </div>
