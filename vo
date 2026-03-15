@@ -1,0 +1,215 @@
+#!/usr/bin/env bash
+# vo — OpenClaw Virtual Office CLI
+# Usage: vo <command> [options]
+# Install: sudo cp vo /usr/local/bin/vo && sudo chmod +x /usr/local/bin/vo
+
+set -e
+
+VERSION="1.0.0"
+SERVICE_NAME="virtual-office"
+INSTALL_DIR="${VIRTUAL_OFFICE_DIR:-$HOME/virtual-office}"
+ENV_FILE="$INSTALL_DIR/server/.env"
+REPO_URL="https://github.com/openclaw/virtual-office.git"
+
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+CYAN='\033[0;36m'
+BOLD='\033[1m'
+NC='\033[0m'
+
+_ok()   { echo -e "${GREEN}✅ $*${NC}"; }
+_err()  { echo -e "${RED}❌ $*${NC}" >&2; exit 1; }
+_info() { echo -e "${CYAN}→ $*${NC}"; }
+_warn() { echo -e "${YELLOW}⚠️  $*${NC}"; }
+
+_require_install() {
+  [ -d "$INSTALL_DIR" ] || _err "Virtual Office not found at $INSTALL_DIR. Run: vo install"
+  [ -f "$ENV_FILE" ]    || _err ".env not found. Run: vo install"
+}
+
+_mask_token() {
+  local t="$1"
+  [ -z "$t" ] && echo "(not set)" && return
+  echo "${t:0:8}...${t: -4}"
+}
+
+cmd_install() {
+  curl -fsSL "https://raw.githubusercontent.com/openclaw/virtual-office/main/install.sh" | bash
+}
+
+cmd_update() {
+  _require_install
+  _info "Pulling latest from git..."
+  git -C "$INSTALL_DIR" pull
+
+  _info "Rebuilding frontend..."
+  (cd "$INSTALL_DIR" && npm install --silent && npm run build)
+
+  _info "Rebuilding server..."
+  (cd "$INSTALL_DIR/server" && npm install --silent && npm run build)
+
+  _info "Restarting service..."
+  sudo systemctl restart "$SERVICE_NAME"
+
+  LOCAL_VER=$(git -C "$INSTALL_DIR" describe --tags --always 2>/dev/null || git -C "$INSTALL_DIR" log -1 --format="%h %s" 2>/dev/null)
+  _ok "Updated! Running: $LOCAL_VER"
+}
+
+cmd_start() {
+  sudo systemctl start "$SERVICE_NAME"
+  _ok "Service started"
+}
+
+cmd_stop() {
+  sudo systemctl stop "$SERVICE_NAME"
+  _ok "Service stopped"
+}
+
+cmd_restart() {
+  sudo systemctl restart "$SERVICE_NAME"
+  _ok "Service restarted"
+}
+
+cmd_status() {
+  echo -e "${BOLD}🏢 OpenClaw Virtual Office${NC} v$VERSION"
+  echo ""
+
+  if sudo systemctl is-active --quiet "$SERVICE_NAME" 2>/dev/null; then
+    echo -e "  Service:  ${GREEN}● running${NC}"
+  elif sudo systemctl is-failed --quiet "$SERVICE_NAME" 2>/dev/null; then
+    echo -e "  Service:  ${RED}✗ failed${NC}"
+  else
+    echo -e "  Service:  ${YELLOW}○ stopped${NC}"
+  fi
+
+  if [ -f "$ENV_FILE" ]; then
+    local url port token
+    url=$(grep ^GATEWAY_URL "$ENV_FILE" 2>/dev/null | cut -d= -f2-)
+    port=$(grep ^PORT "$ENV_FILE" 2>/dev/null | cut -d= -f2-)
+    token=$(grep ^GATEWAY_TOKEN "$ENV_FILE" 2>/dev/null | cut -d= -f2-)
+    echo "  Gateway:  ${url:-not set}"
+    echo "  Port:     ${port:-3001}"
+    echo "  Token:    $(_mask_token "$token")"
+    echo "  URL:      http://localhost:${port:-3001}"
+  fi
+
+  if [ -d "$INSTALL_DIR/.git" ]; then
+    local ver
+    ver=$(git -C "$INSTALL_DIR" log -1 --format="%h — %s" 2>/dev/null)
+    echo "  Version:  $ver"
+  fi
+
+  echo "  Dir:      $INSTALL_DIR"
+}
+
+cmd_logs() {
+  sudo journalctl -u "$SERVICE_NAME" -f --no-hostname
+}
+
+cmd_config() {
+  _require_install
+  local subcmd="$1"; shift || true
+
+  case "$subcmd" in
+    show)
+      echo -e "${BOLD}Current configuration:${NC}"
+      if [ -f "$ENV_FILE" ]; then
+        while IFS='=' read -r key val; do
+          [[ "$key" =~ ^# ]] && continue
+          [ -z "$key" ] && continue
+          if [[ "$key" == *TOKEN* ]]; then
+            echo "  $key = $(_mask_token "$val")"
+          else
+            echo "  $key = $val"
+          fi
+        done < "$ENV_FILE"
+      fi
+      ;;
+    set-token)
+      [ -z "$1" ] && _err "Usage: vo config set-token <token>"
+      sed -i "s|^GATEWAY_TOKEN=.*|GATEWAY_TOKEN=$1|" "$ENV_FILE"
+      _ok "Gateway token updated"
+      _warn "Run 'vo restart' to apply changes"
+      ;;
+    set-url)
+      [ -z "$1" ] && _err "Usage: vo config set-url <url>"
+      sed -i "s|^GATEWAY_URL=.*|GATEWAY_URL=$1|" "$ENV_FILE"
+      _ok "Gateway URL updated to: $1"
+      _warn "Run 'vo restart' to apply changes"
+      ;;
+    set-port)
+      [ -z "$1" ] && _err "Usage: vo config set-port <port>"
+      sed -i "s|^PORT=.*|PORT=$1|" "$ENV_FILE"
+      _ok "Port updated to: $1"
+      _warn "Run 'vo restart' to apply changes"
+      ;;
+    *)
+      echo "Usage: vo config <show|set-token|set-url|set-port>"
+      ;;
+  esac
+}
+
+cmd_version() {
+  echo "vo v$VERSION"
+  if [ -d "$INSTALL_DIR/.git" ]; then
+    echo "App: $(git -C "$INSTALL_DIR" log -1 --format="%h — %s" 2>/dev/null)"
+  fi
+}
+
+cmd_help() {
+  cat <<EOF
+
+${BOLD}🏢 OpenClaw Virtual Office CLI${NC} (vo) v$VERSION
+
+${BOLD}USAGE:${NC}
+  vo <command> [options]
+
+${BOLD}COMMANDS:${NC}
+
+  ${CYAN}install${NC}                    Full installation (clone + build + systemd)
+  ${CYAN}update${NC}                     Pull latest + rebuild + restart
+
+  ${CYAN}start${NC}                      Start the service
+  ${CYAN}stop${NC}                       Stop the service
+  ${CYAN}restart${NC}                    Restart the service
+  ${CYAN}status${NC}                     Show service status + config
+  ${CYAN}logs${NC}                       Tail live logs
+
+  ${CYAN}config show${NC}                Show current configuration
+  ${CYAN}config set-token <token>${NC}   Update Gateway token
+  ${CYAN}config set-url <url>${NC}       Update Gateway URL
+  ${CYAN}config set-port <port>${NC}     Update server port
+
+  ${CYAN}version${NC}                    Show version info
+  ${CYAN}help${NC}                       Show this help
+
+${BOLD}EXAMPLES:${NC}
+  vo install
+  vo update
+  vo config set-token abc123
+  vo config set-url http://192.168.1.5:18789
+  vo logs
+
+${BOLD}ENVIRONMENT:${NC}
+  VIRTUAL_OFFICE_DIR    Override install directory (default: ~/virtual-office)
+
+EOF
+}
+
+# Main
+COMMAND="${1:-help}"; shift 2>/dev/null || true
+
+case "$COMMAND" in
+  install)  cmd_install "$@" ;;
+  update)   cmd_update "$@" ;;
+  start)    cmd_start ;;
+  stop)     cmd_stop ;;
+  restart)  cmd_restart ;;
+  status)   cmd_status ;;
+  logs)     cmd_logs ;;
+  config)   cmd_config "$@" ;;
+  version)  cmd_version ;;
+  help|--help|-h) cmd_help ;;
+  *) echo -e "${RED}Unknown command: $COMMAND${NC}"; cmd_help; exit 1 ;;
+esac

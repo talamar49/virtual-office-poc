@@ -101,6 +101,54 @@ Open http://localhost:3000 in your browser.
 
 ---
 
+## 🛠️ CLI Tool (`vo`)
+
+After installation, use the `vo` CLI to manage your Virtual Office:
+
+```bash
+# Install vo globally
+sudo cp vo /usr/local/bin/vo && sudo chmod +x /usr/local/bin/vo
+```
+
+### Commands
+
+| Command | Description |
+|---------|-------------|
+| `vo install` | Full installation (clone + build + systemd) |
+| `vo update` | Pull latest version + rebuild + restart |
+| `vo start` | Start the service |
+| `vo stop` | Stop the service |
+| `vo restart` | Restart the service |
+| `vo status` | Show status, version, and config |
+| `vo logs` | Tail live logs |
+| `vo config show` | Show current configuration |
+| `vo config set-token <token>` | Update Gateway token |
+| `vo config set-url <url>` | Update Gateway URL |
+| `vo config set-port <port>` | Update server port |
+
+### Examples
+
+```bash
+# Check status
+vo status
+
+# Update to latest version
+vo update
+
+# Change Gateway token
+vo config set-token your_new_token
+vo restart
+
+# Connect to a remote Gateway
+vo config set-url http://192.168.1.5:18789
+vo restart
+
+# View live logs
+vo logs
+```
+
+---
+
 ## 🏭 Production Setup
 
 ### Build
