@@ -2127,7 +2127,8 @@ export default function App() {
 
         // Group sessions by agent, preferring listenable sessions (main/webchat)
         const agentSessions = new Map<string, any>()
-        const SESSION_KIND_PRIORITY: Record<string, number> = { main: 3, webchat: 2, discord: 1 }
+        // Prefer discord sessions — messages sent via chat UI must arrive in the agent's Discord channel
+        const SESSION_KIND_PRIORITY: Record<string, number> = { discord: 3, telegram: 2, webchat: 1, main: 0 }
         for (const session of sessions) {
           const keyParts = (session.key || '').split(':')
           const rawId = keyParts[1] || 'unknown'
