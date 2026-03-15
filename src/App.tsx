@@ -314,7 +314,6 @@ function findPath(from: [number, number], to: [number, number]): [number, number
   const [fx, fy] = from
   const [tx, ty] = to
   // L-shape: go horizontal first, then vertical (avoids walls between rooms)
-  const midPoint: [number, number] = [tx, fy]
   const path: [number, number][] = []
   // Horizontal leg
   const dx = tx > fx ? 1 : -1
@@ -329,34 +328,109 @@ function findPath(from: [number, number], to: [number, number]): [number, number
 // ── Custom seating overrides (populated from backend API) ──
 let _seatingOverrides: Record<string, { room: string; col: number; row: number }> = {}
 
+// ── Work seat allocation — per-room tracking to prevent overlap ──
+// Maps agentId → { roomId, seatIndex }
+const workSeatAssignments: Map<string, { roomId: RoomId; seatIndex: number }> = new Map()
+
+function assignWorkSeat(agentId: string, roomId: RoomId): [number, number] {
+  const room = ROOM_MAP.get(roomId)!
+  const seats = room.seats
+
+  // Already assigned to this room?
+  const existing = workSeatAssignments.get(agentId)
+  if (existing && existing.roomId === roomId && existing.seatIndex < seats.length) {
+    return seats[existing.seatIndex]
+  }
+
+  // Release old assignment if switching rooms
+  releaseWorkSeat(agentId)
+
+  // Find first free seat in this room
+  const takenInRoom = new Set<number>()
+  for (const [, assignment] of workSeatAssignments) {
+    if (assignment.roomId === roomId) takenInRoom.add(assignment.seatIndex)
+  }
+  for (let i = 0; i < seats.length; i++) {
+    if (!takenInRoom.has(i)) {
+      workSeatAssignments.set(agentId, { roomId, seatIndex: i })
+      return seats[i]
+    }
+  }
+
+  // Room full — overflow to openspace
+  if (roomId !== 'openspace') {
+    console.warn(`[Seating] Room '${roomId}' full — overflow '${agentId}' to openspace`)
+    return assignWorkSeat(agentId, 'openspace')
+  }
+
+  // Openspace also full — generate overflow position with offset
+  const overflowIdx = takenInRoom.size
+  const baseSeat = seats.length > 0 ? seats[overflowIdx % seats.length] : [Math.floor((room.startCol + room.endCol) / 2), Math.floor((room.startRow + room.endRow) / 2)] as [number, number]
+  const offset = Math.floor(overflowIdx / Math.max(seats.length, 1))
+  const overflowPos: [number, number] = [baseSeat[0] + offset + 1, baseSeat[1]]
+  workSeatAssignments.set(agentId, { roomId, seatIndex: seats.length + overflowIdx })
+  console.warn(`[Seating] Overflow: '${agentId}' at [${overflowPos}]`)
+  return overflowPos
+}
+
+function releaseWorkSeat(agentId: string) {
+  workSeatAssignments.delete(agentId)
+}
+
+// ── Collision detection — verify no two agents share a tile ──
+const _occupiedTiles: Map<string, string> = new Map() // "col,row" → agentId
+
+function claimTile(agentId: string, col: number, row: number): [number, number] {
+  const key = `${col},${row}`
+  const occupant = _occupiedTiles.get(key)
+  if (occupant && occupant !== agentId) {
+    // Collision! Nudge this agent to adjacent tile
+    console.warn(`[Seating] Collision: '${agentId}' and '${occupant}' both at [${col},${row}] — nudging`)
+    // Try offsets: right, below, left, above, diagonals
+    const offsets: [number, number][] = [[1, 0], [0, 1], [-1, 0], [0, -1], [1, 1], [-1, 1], [1, -1], [-1, -1]]
+    for (const [dx, dy] of offsets) {
+      const nk = `${col + dx},${row + dy}`
+      if (!_occupiedTiles.has(nk)) {
+        _occupiedTiles.set(nk, agentId)
+        return [col + dx, row + dy]
+      }
+    }
+    // All adjacent taken — stack with small offset (worst case)
+    _occupiedTiles.set(`${col + 2},${row}`, agentId)
+    return [col + 2, row]
+  }
+  // Release old tile claim
+  for (const [k, v] of _occupiedTiles) {
+    if (v === agentId) { _occupiedTiles.delete(k); break }
+  }
+  _occupiedTiles.set(key, agentId)
+  return [col, row]
+}
+
 // ── Get target tile based on state ──
 function getTargetTileForAgent(agentId: string, state: AgentState): { pos: [number, number]; room: RoomId } {
   // Check custom seating override first (drag & drop assignments)
   const override = _seatingOverrides[agentId]
   if (override && (state === 'working' || state === 'active' || state === 'error')) {
     releaseLoungeSpot(agentId)
-    return { pos: [override.col, override.row], room: override.room as RoomId }
+    releaseWorkSeat(agentId)
+    const pos = claimTile(agentId, override.col, override.row)
+    return { pos, room: override.room as RoomId }
   }
 
   // Idle/offline → lounge
   if (state === 'idle' || state === 'offline') {
+    releaseWorkSeat(agentId)
     const pos = assignLoungeSpot(agentId)
-    return { pos, room: 'lounge' }
+    const claimed = claimTile(agentId, pos[0], pos[1])
+    return { pos: claimed, room: 'lounge' }
   }
   // Working/active/error → assigned work room cubicle
   releaseLoungeSpot(agentId)
   const roomId = getWorkRoom(agentId)
-  const room = ROOM_MAP.get(roomId)!
-  const known = KNOWN_AGENTS[agentId]
-  const idx = known?.fixedIndex ?? 0
-  if (room.seats.length > 0) {
-    const seat = room.seats[idx % room.seats.length]
-    return { pos: seat, room: roomId }
-  }
-  // Fallback — room center
-  const cx = Math.floor((room.startCol + room.endCol) / 2)
-  const cy = Math.floor((room.startRow + room.endRow) / 2)
-  return { pos: [cx, cy], room: roomId }
+  const seat = assignWorkSeat(agentId, roomId)
+  const claimed = claimTile(agentId, seat[0], seat[1])
+  return { pos: claimed, room: roomId }
 }
 
 function computeGridSize(_agentCount: number) {
