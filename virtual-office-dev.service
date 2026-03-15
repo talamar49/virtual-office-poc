@@ -1,0 +1,25 @@
+[Unit]
+Description=Virtual Office — Dev Mode (Vite HMR + tsx watch)
+After=network.target
+Conflicts=virtual-office.service
+
+[Service]
+Type=forking
+User=tal
+WorkingDirectory=/home/tal/projects/virtual-office-poc
+ExecStart=/bin/bash -c '\
+  cd /home/tal/projects/virtual-office-poc/server && \
+  npx tsx watch --env-file=.env src/index.ts > /tmp/vo-backend.log 2>&1 & \
+  echo $! > /tmp/vo-backend.pid && \
+  cd /home/tal/projects/virtual-office-poc && \
+  npx vite --host --port 18000 > /tmp/vo-frontend.log 2>&1 & \
+  echo $! > /tmp/vo-frontend.pid'
+ExecStop=/bin/bash -c 'kill $(cat /tmp/vo-backend.pid) $(cat /tmp/vo-frontend.pid) 2>/dev/null'
+PIDFile=/tmp/vo-backend.pid
+Environment=PATH=/home/tal/.npm-global/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+Environment=HOME=/home/tal
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
