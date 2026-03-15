@@ -1,14 +1,80 @@
 import { useRef, useEffect, useState, useCallback } from 'react'
 
+// ── i18n ──
+type Lang = 'he' | 'en'
+const translations = {
+  he: {
+    virtualOffice: 'משרד וירטואלי',
+    loading: 'המשרד נטען...',
+    connectingAgents: 'מחבר סוכנים...',
+    setup: 'הגדרות חיבור',
+    gatewayToken: 'Gateway Token',
+    gatewayUrl: 'כתובת Gateway',
+    tokenPlaceholder: 'הזן את ה-Gateway Token שלך',
+    connect: 'התחבר',
+    demoMode: 'סביבת דמו',
+    sendMessage: 'שלח הודעה להתחיל שיחה',
+    send: 'שלח',
+    typeMessage: 'הקלד הודעה...',
+    active: 'פעיל',
+    working: 'עובד',
+    idle: 'ממתין',
+    offline: 'לא מחובר',
+    error: 'שגיאה',
+    workZone: '💻 אזור עבודה',
+    loungeZone: '☕ אזור מנוחה',
+    errorZone: '🐛 שגיאות',
+    currentTask: 'משימה נוכחית',
+    language: 'שפה',
+  },
+  en: {
+    virtualOffice: 'Virtual Office',
+    loading: 'Loading office...',
+    connectingAgents: 'Connecting agents...',
+    setup: 'Connection Setup',
+    gatewayToken: 'Gateway Token',
+    gatewayUrl: 'Gateway URL',
+    tokenPlaceholder: 'Enter your Gateway Token',
+    connect: 'Connect',
+    demoMode: 'Demo Mode',
+    sendMessage: 'Send a message to start a conversation',
+    send: 'Send',
+    typeMessage: 'Type a message...',
+    active: 'Active',
+    working: 'Working',
+    idle: 'Idle',
+    offline: 'Offline',
+    error: 'Error',
+    workZone: '💻 Work Zone',
+    loungeZone: '☕ Lounge',
+    errorZone: '🐛 Errors',
+    currentTask: 'Current Task',
+    language: 'Language',
+  },
+} as const
+
+function useI18n() {
+  const [lang, setLang] = useState<Lang>(() => (localStorage.getItem('office-lang') as Lang) || 'he')
+  const t = translations[lang]
+  const toggleLang = useCallback(() => {
+    const next = lang === 'he' ? 'en' : 'he'
+    localStorage.setItem('office-lang', next)
+    setLang(next)
+  }, [lang])
+  const dir = lang === 'he' ? 'rtl' : 'ltr'
+  return { lang, t, toggleLang, dir }
+}
+
 // ── Types ──
 type AgentState = 'active' | 'idle' | 'working' | 'offline' | 'error'
 
 interface ChatMessage {
   id: string
-  role: 'user' | 'assistant'
+  role: 'user' | 'assistant' | 'agent'
   text: string
   ts: number
   source?: string // channel source: 'discord', 'telegram', 'webchat', etc.
+  senderName?: string // for inter-agent messages
 }
 
 // Filter out internal/system messages that shouldn't appear in chat UI
@@ -770,8 +836,7 @@ const walkSprites: Record<string, HTMLImageElement> = {}
 const walkFrameCounts: Record<string, number> = {}
 const walkHasSwRow: Record<string, boolean> = {} // true if sprite has 2 rows (64px height)
 
-// Cubicle sprites — personalized desk+monitor+agent combo (32×32, single frame)
-const cubicleSprites: Record<string, HTMLImageElement> = {}
+// (cubicle sprites removed)
 
 const SPRITE_ALIASES: Record<string, string> = { main: 'yogi' }
 
@@ -825,14 +890,7 @@ function loadSpritesForAgents(defs: AgentDef[]) {
     }
 
     // Load cubicle sprite (personalized desk+monitor for work zone)
-    if (!cubicleSprites[agent.id]) {
-      const img = new Image()
-      img.onerror = () => { /* silent — no personalized cubicle */ }
-      img.src = `/assets/characters/cubicle_${spriteId}.png`
-      cubicleSprites[agent.id] = img
-    }
-
-    // Load walk sprite
+        // Load walk sprite
     if (!walkSprites[agent.id]) {
       const img = new Image()
       img.onload = () => {
@@ -1274,21 +1332,6 @@ function drawAgent(
 
   // Breathing disabled — caused sub-pixel flicker on pixel art sprites
   const breathOffset = 0
-
-  // Draw personalized cubicle backdrop when agent is at their work desk
-  const isAtDesk = agent.zone === 'work' && Math.abs(agent.x - agent.tx) < 0.5 && Math.abs(agent.y - agent.ty) < 0.5
-  const cubicleImg = cubicleSprites[agent.def.id]
-  if (isAtDesk && cubicleImg?.complete && cubicleImg.naturalWidth > 0) {
-    const cubDrawX = Math.round(sx - SPRITE_DISPLAY / 2)
-    const cubDrawY = Math.round(sy - SPRITE_DISPLAY + 8 + sitOffset)
-    ctx.imageSmoothingEnabled = false
-    ctx.drawImage(
-      cubicleImg,
-      0, 0, SPRITE_SIZE, SPRITE_SIZE,
-      cubDrawX, cubDrawY, SPRITE_DISPLAY, SPRITE_DISPLAY,
-    )
-    ctx.imageSmoothingEnabled = true
-  }
 
   // Determine pose based on zone and movement
   const isMoving = Math.abs(agent.x - agent.tx) > 0.5 || Math.abs(agent.y - agent.ty) > 0.5
@@ -1783,9 +1826,13 @@ function hitTestAgent(
 
 // ── Settings / Onboarding Screen ──
 
-function SettingsScreen({ onConnect, onDemo }: {
+function SettingsScreen({ onConnect, onDemo, t, dir, toggleLang, lang }: {
   onConnect: (token: string, url: string) => void
   onDemo: () => void
+  t: typeof translations[Lang]
+  dir: string
+  toggleLang: () => void
+  lang: Lang
 }) {
   const [token, setToken] = useState(localStorage.getItem('gateway-token') || '')
   const [url, setUrl] = useState(localStorage.getItem('gateway-url') || 'http://127.0.0.1:18789')
@@ -1797,16 +1844,15 @@ function SettingsScreen({ onConnect, onDemo }: {
   }
 
   const inputStyle: React.CSSProperties = {
-    width: '100%', padding: '10px 12px', borderRadius: 0,
-    border: '2px solid #3a3a5c', background: '#16162b', color: '#eee',
-    fontSize: 9, outline: 'none', boxSizing: 'border-box', direction: 'ltr',
-    fontFamily: '"Press Start 2P", cursive',
-    boxShadow: 'inset -2px -2px 0 #0a0a1a, inset 2px 2px 0 #2a2a4a',
+    width: '100%', padding: '12px 14px', borderRadius: 8,
+    border: '1px solid #3a3a5c', background: '#1e1e38', color: '#eee',
+    fontSize: 15, outline: 'none', boxSizing: 'border-box', direction: 'ltr',
+    fontFamily: '"Heebo", "Segoe UI", sans-serif',
   }
 
   const labelStyle: React.CSSProperties = {
-    fontSize: 8, color: '#7a7aaa', marginBottom: 6, display: 'block', direction: 'rtl',
-    fontFamily: '"Press Start 2P", cursive',
+    fontSize: 14, color: '#9a9aca', marginBottom: 6, display: 'block', direction: 'rtl',
+    fontFamily: '"Heebo", "Segoe UI", sans-serif', fontWeight: 500,
   }
 
   return (
@@ -1815,34 +1861,39 @@ function SettingsScreen({ onConnect, onDemo }: {
       display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 100,
     }}>
       <div style={{
-        background: '#16162b', borderRadius: 0, padding: 32, width: 380, maxWidth: '90vw',
-        border: '2px solid #3a3a5c',
-        boxShadow: 'inset -2px -2px 0 #0a0a1a, inset 2px 2px 0 #2a2a4a, 0 8px 40px rgba(0,0,0,0.6)',
-        fontFamily: '"Press Start 2P", cursive',
+        position: 'relative', background: '#1a1a30', borderRadius: 16, padding: 36, width: 400, maxWidth: '90vw',
+        border: '1px solid #3a3a5c',
+        boxShadow: '0 8px 40px rgba(0,0,0,0.5)',
+        fontFamily: '"Heebo", "Segoe UI", sans-serif',
       }}>
         <h1 style={{
-          fontSize: 12, color: '#e0e0e0', textAlign: 'center', margin: '0 0 8px',
-          fontWeight: 600, fontFamily: '"Press Start 2P", cursive',
+          fontSize: 24, color: '#e0e0e0', textAlign: 'center', margin: '0 0 8px',
+          fontWeight: 700, fontFamily: '"Heebo", "Segoe UI", sans-serif',
         }}>
-          🏢 Virtual Office — Setup
+          🏢 {t.virtualOffice}
         </h1>
-        <p style={{ fontSize: 7, color: '#7a7aaa', textAlign: 'center', margin: '0 0 24px' }}>
-          הגדר את החיבור ל-Gateway
+        <p style={{ fontSize: 14, color: '#7a7aaa', textAlign: 'center', margin: '0 0 28px' }}>
+          {t.setup}
         </p>
+        <button onClick={toggleLang} style={{
+          position: 'absolute', top: 12, right: 12, background: 'rgba(255,255,255,0.08)',
+          border: '1px solid #3a3a5c', borderRadius: 8, padding: '4px 10px',
+          color: '#9a9aca', fontSize: 12, cursor: 'pointer', fontFamily: '"Heebo", sans-serif',
+        }}>{lang === 'he' ? 'EN' : 'עב'}</button>
 
         <div style={{ marginBottom: 16 }}>
-          <label style={labelStyle}>Gateway Token</label>
+          <label style={labelStyle}>{t.gatewayToken}</label>
           <input
             type="password"
             value={token}
             onChange={e => setToken(e.target.value)}
-            placeholder="הזן את ה-Gateway Token שלך"
+            placeholder={t.tokenPlaceholder}
             style={inputStyle}
           />
         </div>
 
         <div style={{ marginBottom: 24 }}>
-          <label style={labelStyle}>Gateway URL</label>
+          <label style={labelStyle}>{t.gatewayUrl}</label>
           <input
             type="text"
             value={url}
@@ -1856,15 +1907,15 @@ function SettingsScreen({ onConnect, onDemo }: {
           onClick={handleConnect}
           disabled={!token.trim()}
           style={{
-            width: '100%', padding: '12px 0', borderRadius: 0,
+            width: '100%', padding: '14px 0', borderRadius: 10,
             background: token.trim() ? '#4a6aff' : '#333', color: '#fff',
-            border: '2px solid #3a3a5c', fontSize: 10, fontWeight: 600, cursor: token.trim() ? 'pointer' : 'default',
+            border: 'none', fontSize: 16, fontWeight: 600, cursor: token.trim() ? 'pointer' : 'default',
             marginBottom: 12, opacity: token.trim() ? 1 : 0.5,
-            fontFamily: '"Press Start 2P", cursive',
-            boxShadow: 'inset -2px -2px 0 #0a0a1a, inset 2px 2px 0 #6a8aff',
+            fontFamily: '"Heebo", "Segoe UI", sans-serif',
+            transition: 'background 0.2s',
           }}
         >
-          התחבר
+          {t.connect}
         </button>
 
         <div style={{ textAlign: 'center' }}>
@@ -1872,11 +1923,11 @@ function SettingsScreen({ onConnect, onDemo }: {
             onClick={onDemo}
             style={{
               background: 'none', border: 'none', color: '#7a7aff',
-              fontSize: 8, cursor: 'pointer', textDecoration: 'underline',
-              fontFamily: '"Press Start 2P", cursive',
+              fontSize: 13, cursor: 'pointer', textDecoration: 'underline',
+              fontFamily: '"Heebo", "Segoe UI", sans-serif',
             }}
           >
-            סביבת דמו
+            {t.demoMode}
           </button>
         </div>
       </div>
@@ -2033,6 +2084,7 @@ const NOTIFICATION_DURATION_MS = 5_000
 
 // ── React App ──
 export default function App() {
+  const { lang, t, toggleLang, dir } = useI18n()
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const [hoverAgentId, _setHoverAgentId] = useState<string | null>(null)
   const hoverAgentIdRef = useRef<string | null>(null)
@@ -2196,7 +2248,7 @@ export default function App() {
             'X-Gateway-Token': gatewayToken,
             'X-Gateway-URL': gatewayUrl,
           },
-          body: JSON.stringify({ activeMinutes: 10080, messageLimit: 3 }), // 7 days — load ALL agents
+          body: JSON.stringify({ activeMinutes: 10080, messageLimit: 1 }), // 7 days — load ALL agents, minimal messages for speed
         })
         if (!res.ok) return
         const data = await res.json()
@@ -2850,21 +2902,34 @@ export default function App() {
 
     return history
       .filter((m: any) => m.role === 'user' || m.role === 'assistant')
-      .map((m: any, i: number) => ({
-        id: m.id || `hist-${i}-${m.timestamp || i}`,
-        role: m.role as 'user' | 'assistant',
-        text: (m.text || m.content || m.preview || '').substring(0, 2000),
-        ts: m.timestamp ? new Date(m.timestamp).getTime() : Date.now() - (history.length - i) * 1000,
-        source: m.channel || m.source || undefined,
-      }))
-      .filter((m: ChatMessage) => m.text.length > 0)
+      .map((m: any, i: number) => {
+        const text = (m.text || m.content || m.preview || '').substring(0, 2000)
+        // Detect inter-agent messages (from sessions_send)
+        const interAgentMatch = text.match(/^\[Inter-session message\] sourceSession=agent:([^:\s]+)/)
+        const isInterAgent = interAgentMatch || text.startsWith('[Inter-session')
+        const senderName = interAgentMatch?.[1] || undefined
+        // Clean inter-agent prefix from displayed text
+        const cleanText = isInterAgent
+          ? text.replace(/^\[Inter-session message\][^\n]*\n?/, '').trim()
+          : text
+        return {
+          id: m.id || `hist-${i}-${m.timestamp || i}`,
+          role: (isInterAgent ? 'agent' : m.role) as 'user' | 'assistant' | 'agent',
+          text: cleanText,
+          ts: m.timestamp ? new Date(m.timestamp).getTime() : Date.now() - (history.length - i) * 1000,
+          source: m.channel || m.source || undefined,
+          senderName,
+        }
+      })
+      .filter((m: ChatMessage) => m.text.length > 0 && !isVisibleMessage(m) === false)
+      .filter(isVisibleMessage)
   }, [gatewayToken, gatewayUrl, getBackendBase])
 
   const selectedAgent = agentDefs.find(a => a.id === selectedId) ?? null
 
     // Show settings screen
   if (showSettings) {
-    return <SettingsScreen onConnect={handleConnect} onDemo={handleDemo} />
+    return <SettingsScreen onConnect={handleConnect} onDemo={handleDemo} t={t} dir={dir} toggleLang={toggleLang} lang={lang} />
   }
 
   return (
@@ -2902,21 +2967,20 @@ export default function App() {
         <div style={{
           position: 'absolute', inset: 0, zIndex: 50,
           background: '#1a1a2e', display: 'flex', flexDirection: 'column',
-          alignItems: 'center', justifyContent: 'center', gap: 16,
-          fontFamily: '"Press Start 2P", cursive',
+          alignItems: 'center', justifyContent: 'center', gap: 20,
+          fontFamily: '"Heebo", "Segoe UI", sans-serif',
         }}>
-          <div style={{ fontSize: 48 }}>🏢</div>
-          <div style={{ color: '#7a7aaa', fontSize: 10 }}>טוען משרד...</div>
+          <div style={{ fontSize: 56 }}>🏢</div>
+          <div style={{ color: '#c0c0e0', fontSize: 18, fontWeight: 600 }}>{t.loading}</div>
           <div style={{
-            width: 120, height: 8, background: '#2a2a4a', borderRadius: 0, overflow: 'hidden',
-            border: '2px solid #3a3a5c',
+            width: 200, height: 6, background: '#2a2a4a', borderRadius: 3, overflow: 'hidden',
           }}>
             <div style={{
-              width: '100%', height: '100%', background: '#4a6aff', borderRadius: 0,
-              animation: 'loading 2s steps(8) infinite',
+              width: '100%', height: '100%', background: 'linear-gradient(90deg, #4a6aff, #7a9aff)',
+              borderRadius: 3, animation: 'loading 1.5s ease-in-out infinite',
             }} />
           </div>
-          <div style={{ color: '#4a6aff', fontSize: 8, animation: 'pixelBlink 1s steps(1) infinite' }}>▓▓▓</div>
+          <div style={{ color: '#7a7aaa', fontSize: 13 }}>{t.connectingAgents}</div>
         </div>
       )}
       <canvas
@@ -3454,9 +3518,18 @@ function ChatInput({ agentId, agentColor, compact, onSend, onFetchHistory }: {
     }
   }, [agentId, onFetchHistory])
 
-  // Auto-scroll to bottom
+  // Auto-scroll to bottom — instant on first load, no scroll animation
+  const prevMsgCountRef = useRef(0)
   useEffect(() => {
-    if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight
+    if (!scrollRef.current) return
+    const el = scrollRef.current
+    // Only auto-scroll if user is near bottom (within 150px) or it's first load
+    const isNearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 150
+    const isFirstLoad = prevMsgCountRef.current === 0 && messages.length > 0
+    if (isNearBottom || isFirstLoad) {
+      el.scrollTop = el.scrollHeight
+    }
+    prevMsgCountRef.current = messages.length
   }, [messages, streamText])
 
   // WebSocket listener for streaming responses from backend watcher
@@ -3523,7 +3596,14 @@ function ChatInput({ agentId, agentColor, compact, onSend, onFetchHistory }: {
         if (history.length > 0) {
           if (lastTs) {
             const existingIds = new Set(current.map(m => m.id))
-            const newMsgs = history.filter(m => !existingIds.has(m.id) && m.ts > lastTs)
+            const existingTexts = new Set(current.map(m => `${m.role}:${m.text.substring(0, 100)}`))
+            const newMsgs = history.filter(m => {
+              if (existingIds.has(m.id)) return false
+              // Deduplicate by role+text — prevents duplicates from WS + poll race
+              const textKey = `${m.role}:${m.text.substring(0, 100)}`
+              if (existingTexts.has(textKey)) return false
+              return m.ts > lastTs
+            })
             if (newMsgs.length > 0) {
               const merged = [...current, ...newMsgs]
               globalChatCache[agentId] = merged
@@ -3581,38 +3661,55 @@ function ChatInput({ agentId, agentColor, compact, onSend, onFetchHistory }: {
       <div ref={scrollRef} style={{
         flex: 1, overflowY: 'auto', padding: '10px 12px',
         display: 'flex', flexDirection: 'column', gap: 6,
-        scrollBehavior: 'smooth',
+
       }}>
         {messages.length === 0 && !streamText && (
           <div style={{ textAlign: 'center', color: '#555', fontSize: 13, marginTop: 40 }}>
             💬 שלח הודעה להתחיל שיחה
           </div>
         )}
-        {messages.map(msg => (
+        {messages.map(msg => {
+          const isAgent = msg.role === 'agent'
+          const isUser = msg.role === 'user'
+          const align = isUser ? 'flex-start' : isAgent ? 'center' : 'flex-end'
+          const bgColor = isUser ? 'rgba(60, 60, 120, 0.5)'
+            : isAgent ? 'rgba(255, 165, 0, 0.15)' // orange tint for inter-agent
+            : 'rgba(255,255,255,0.06)'
+          const borderColor = isUser ? '1px solid rgba(80,80,150,0.3)'
+            : isAgent ? '1px solid rgba(255, 165, 0, 0.3)'
+            : `1px solid ${agentColor}33`
+          const borderRadius = isUser ? '12px 12px 4px 12px'
+            : isAgent ? '8px' : '12px 12px 12px 4px'
+          return (
           <div key={msg.id} style={{
-            alignSelf: msg.role === 'user' ? 'flex-start' : 'flex-end',
-            maxWidth: '80%',
+            alignSelf: align,
+            maxWidth: isAgent ? '90%' : '80%',
           }}>
+            {isAgent && msg.senderName && (
+              <div style={{ fontSize: 10, color: '#f0a030', marginBottom: 2, textAlign: 'center' }}>
+                🤖 {msg.senderName}
+              </div>
+            )}
             <div style={{
               padding: '8px 12px',
-              borderRadius: msg.role === 'user' ? '12px 12px 4px 12px' : '12px 12px 12px 4px',
-              background: msg.role === 'user' ? 'rgba(60, 60, 120, 0.5)' : 'rgba(255,255,255,0.06)',
-              border: msg.role === 'assistant' ? `1px solid ${agentColor}33` : '1px solid rgba(80,80,150,0.3)',
+              borderRadius,
+              background: bgColor,
+              border: borderColor,
               color: '#e0e0e0', fontSize: 13, lineHeight: 1.6, wordBreak: 'break-word',
             }}>
               {renderMarkdown(msg.text)}
             </div>
             <div style={{
               fontSize: 10, color: '#666', marginTop: 2,
-              textAlign: msg.role === 'user' ? 'left' : 'right',
+              textAlign: isUser ? 'left' : 'right',
               padding: '0 4px', display: 'flex', gap: 3,
-              justifyContent: msg.role === 'user' ? 'flex-start' : 'flex-end',
+              justifyContent: isUser ? 'flex-start' : 'flex-end',
             }}>
               {msg.ts ? formatTime(msg.ts) : ''}
-              {msg.role === 'user' && msg.id.startsWith('local-') && ' ✓✓'}
+              {isUser && msg.id.startsWith('local-') && ' ✓✓'}
             </div>
           </div>
-        ))}
+        )})}
         {/* Streaming message — token by token */}
         {streamText && (
           <div style={{ alignSelf: 'flex-end', maxWidth: '80%' }}>
@@ -3683,17 +3780,18 @@ function ChatInput({ agentId, agentColor, compact, onSend, onFetchHistory }: {
           style={{
             width: 40, height: 40, borderRadius: 8,
             border: 'none',
-            background: text.trim() && status !== 'sending' ? agentColor : 'rgba(255,255,255,0.08)',
+            background: text.trim() && status !== 'sending' ? '#22c55e' : 'rgba(255,255,255,0.08)',
             color: '#fff', fontSize: 18,
             cursor: text.trim() && status !== 'sending' ? 'pointer' : 'default',
             display: 'flex', alignItems: 'center', justifyContent: 'center',
-            flexShrink: 0, transition: 'background 0.2s',
+            flexShrink: 0, transition: 'background 0.3s, transform 0.15s',
+            transform: text.trim() ? 'scale(1.05)' : 'scale(1)',
           }}
           title="שלח"
         >
           {status === 'sending' ? (
             <span style={{ display: 'inline-block', width: 16, height: 16, border: '2px solid rgba(255,255,255,0.3)', borderTopColor: '#fff', borderRadius: '50%', animation: 'chatSpin 0.6s linear infinite' }} />
-          ) : '◀'}
+          ) : '▶'}
         </button>
       </div>
     </div>
