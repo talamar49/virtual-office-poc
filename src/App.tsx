@@ -323,15 +323,19 @@ interface EditState {
 let _decoIdCounter = 0
 function nextDecoId() { return ++_decoIdCounter }
 
-const DEFAULT_DECORATIONS: Decoration[] = [
-  // Reception area — plants at entrance
-  { type: 'plant_large', col: 0, row: 0, scale: 1.1 },
-  { type: 'plant_small', col: 0, row: 2, scale: 1 },
-  // Coffee corner (bottom-left) — plant + table
-  { type: 'plant_large', col: 1, row: MAP_ROWS - 3, scale: 1.1 },
-  // Meeting room (bottom-right) — plant
-  { type: 'plant_small', col: MAP_COLS - 3, row: MAP_ROWS - 3, scale: 1 },
-]
+// Decorations computed dynamically based on current grid size
+function getDefaultDecorations(): Decoration[] {
+  return [
+    // Reception area — plants at entrance
+    { type: 'plant_large', col: 0, row: 0, scale: 1.1 },
+    { type: 'plant_small', col: 0, row: 2, scale: 1 },
+    // Coffee corner (bottom-left) — plant + table
+    { type: 'plant_large', col: 1, row: MAP_ROWS - 3, scale: 1.1 },
+    // Meeting room (bottom-right) — plant
+    { type: 'plant_small', col: MAP_COLS - 3, row: MAP_ROWS - 3, scale: 1 },
+  ]
+}
+const DEFAULT_DECORATIONS: Decoration[] = getDefaultDecorations()
 
 // ── Decoration persistence ──
 function loadLayout(): DecorationWithId[] {
@@ -1438,7 +1442,7 @@ function drawAgent(
     ctx.restore()
   } else if (agent.def.state === 'idle') {
     // Subtle idle indicator — small zzz
-    const zAlpha = 0.3 + 0.2 * Math.sin(t * 0.002)
+    const zAlpha = 0.3 + 0.2 * Math.sin(t * 2)
     ctx.save()
     ctx.globalAlpha = zAlpha
     ctx.font = '10px sans-serif'
