@@ -791,6 +791,8 @@ const ROOM_WALLS = generateRoomWalls()
 // Per-room furniture placement
 interface FurniturePlacement { asset: string; col: number; row: number; scale?: number }
 
+// Furniture placement: cubicles/desks are 1 row NORTH of agent seat
+// so the agent faces SOUTH (toward camera) with desk behind them
 const ROOM_FURNITURE: Record<RoomId, FurniturePlacement[]> = {
   reception: [
     { asset: 'reception_desk', col: 10, row: 1 },
@@ -799,34 +801,38 @@ const ROOM_FURNITURE: Record<RoomId, FurniturePlacement[]> = {
     { asset: 'water_cooler', col: 14, row: 1 },
   ],
   dev: [
-    { asset: 'cubicle_work', col: 1, row: 4 },
-    { asset: 'cubicle_work', col: 1, row: 7 },
-    { asset: 'cubicle_work', col: 3, row: 4 },
+    // Seats: [1,4],[1,7],[3,4] → desks 1 row north
+    { asset: 'cubicle_work', col: 1, row: 3 },
+    { asset: 'cubicle_work', col: 1, row: 6 },
+    { asset: 'cubicle_work', col: 3, row: 3 },
     { asset: 'server_rack', col: 4, row: 8 },
     { asset: 'plant_small', col: 5, row: 3 },
   ],
   openspace: [
-    { asset: 'cubicle_work', col: 7, row: 4 },
-    { asset: 'cubicle_work', col: 7, row: 7 },
-    { asset: 'cubicle_work', col: 10, row: 4 },
-    { asset: 'cubicle_work', col: 10, row: 7 },
-    { asset: 'cubicle_work', col: 13, row: 4 },
-    { asset: 'cubicle_work', col: 13, row: 7 },
+    // Seats: [7,4],[7,7],[10,4],[10,7],[13,4],[13,7] → desks 1 row north
+    { asset: 'cubicle_work', col: 7, row: 3 },
+    { asset: 'cubicle_work', col: 7, row: 6 },
+    { asset: 'cubicle_work', col: 10, row: 3 },
+    { asset: 'cubicle_work', col: 10, row: 6 },
+    { asset: 'cubicle_work', col: 13, row: 3 },
+    { asset: 'cubicle_work', col: 13, row: 6 },
     { asset: 'printer', col: 14, row: 8 },
     { asset: 'water_cooler', col: 6, row: 8 },
     { asset: 'plant_large', col: 14, row: 3 },
   ],
   biz: [
-    { asset: 'cubicle_work', col: 16, row: 4 },
-    { asset: 'cubicle_work', col: 16, row: 7 },
-    { asset: 'cubicle_work', col: 18, row: 4 },
-    { asset: 'cubicle_work', col: 18, row: 7 },
+    // Seats: [16,4],[16,7],[18,4],[18,7] → desks 1 row north
+    { asset: 'cubicle_work', col: 16, row: 3 },
+    { asset: 'cubicle_work', col: 16, row: 6 },
+    { asset: 'cubicle_work', col: 18, row: 3 },
+    { asset: 'cubicle_work', col: 18, row: 6 },
     { asset: 'bookshelf', col: 20, row: 4 },
     { asset: 'plant_small', col: 20, row: 8 },
   ],
   qa: [
-    { asset: 'cubicle_work', col: 1, row: 11 },
-    { asset: 'cubicle_work', col: 3, row: 11 },
+    // Seats: [1,11],[3,11] → desks 1 row north
+    { asset: 'cubicle_work', col: 1, row: 10 },
+    { asset: 'cubicle_work', col: 3, row: 10 },
     { asset: 'printer', col: 4, row: 12 },
   ],
   meeting: [
@@ -834,6 +840,7 @@ const ROOM_FURNITURE: Record<RoomId, FurniturePlacement[]> = {
     { asset: 'plant_small', col: 20, row: 10 },
   ],
   lounge: [
+    // Sofas stay at same spot — agents sit ON the sofa
     { asset: 'lounge_sofa', col: 2, row: 15 },
     { asset: 'lounge_sofa', col: 2, row: 17 },
     { asset: 'lounge_sofa', col: 8, row: 15 },
@@ -844,7 +851,8 @@ const ROOM_FURNITURE: Record<RoomId, FurniturePlacement[]> = {
     { asset: 'plant_small', col: 0, row: 14 },
   ],
   manager: [
-    { asset: 'manager_desk', col: 17, row: 16 },
+    // Seat: [17,16] → desk 1 row north
+    { asset: 'manager_desk', col: 17, row: 15 },
     { asset: 'bookshelf', col: 20, row: 15 },
     { asset: 'plant_large', col: 15, row: 18 },
   ],
