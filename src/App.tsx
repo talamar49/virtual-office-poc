@@ -3037,7 +3037,7 @@ export default function App() {
     <div style={{ width: '100vw', height: '100vh', position: 'relative', overflow: 'hidden', direction: dir as any }}>
       {/* Global pixel art styles */}
       <style>{`
-        @import url('https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap');
+        @import url('https://fonts.googleapis.com/css2?family=Heebo:wght@300;400;500;600;700&display=swap');
         * { image-rendering: pixelated; }
         canvas { image-rendering: pixelated; image-rendering: crisp-edges; }
         ::-webkit-scrollbar { width: 6px; height: 6px; }
@@ -3123,7 +3123,7 @@ export default function App() {
               padding: isCompact ? '8px 10px' : '10px 14px',
               display: 'flex', alignItems: 'center', gap: 10,
               cursor: 'pointer',
-              fontFamily: '"Press Start 2P", cursive',
+              fontFamily: '"Heebo", "Segoe UI", sans-serif',
               boxShadow: 'inset -2px -2px 0 #0a0a1a, inset 2px 2px 0 #2a2a4a, 0 4px 12px rgba(0,0,0,0.5)',
               animation: 'chatFadeIn 0.3s ease-out',
               direction: 'rtl',
@@ -3151,7 +3151,7 @@ export default function App() {
           background: 'rgba(30,30,55,0.8)', border: '2px solid #3a3a5c',
           borderRadius: 0, width: 36, height: 36, fontSize: 18,
           cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center',
-          color: '#aaa', fontFamily: '"Press Start 2P", cursive',
+          color: '#aaa', fontFamily: '"Heebo", "Segoe UI", sans-serif',
           boxShadow: 'inset -2px -2px 0 #0a0a1a, inset 2px 2px 0 #2a2a4a',
         }}
         title={t.settings}
@@ -3172,7 +3172,7 @@ export default function App() {
           borderRadius: 0, width: 36, height: 36, fontSize: 16,
           cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center',
           color: soundEnabled ? '#fff' : '#666',
-          fontFamily: '"Press Start 2P", cursive',
+          fontFamily: '"Heebo", "Segoe UI", sans-serif',
           boxShadow: 'inset -2px -2px 0 #0a0a1a, inset 2px 2px 0 #2a2a4a',
         }}
         title={soundEnabled ? t.muteSound : t.enableSound}
@@ -3190,7 +3190,7 @@ export default function App() {
           width: 36, height: 36, fontSize: 18,
           cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center',
           color: dashboardMode ? '#fff' : '#aaa',
-          fontFamily: '"Press Start 2P", cursive',
+          fontFamily: '"Heebo", "Segoe UI", sans-serif',
           boxShadow: 'inset -2px -2px 0 #0a0a1a, inset 2px 2px 0 #2a2a4a',
           zIndex: 20,
         }}
@@ -3208,7 +3208,7 @@ export default function App() {
           border: '2px solid #3a3a5c', borderRadius: 0,
           padding: '6px 10px', fontSize: 9, cursor: 'pointer',
           color: editMode ? '#fff' : '#aaa', whiteSpace: 'nowrap',
-          fontFamily: '"Press Start 2P", cursive',
+          fontFamily: '"Heebo", "Segoe UI", sans-serif',
           boxShadow: 'inset -2px -2px 0 #0a0a1a, inset 2px 2px 0 #2a2a4a',
         }}
       >
@@ -3222,7 +3222,7 @@ export default function App() {
           background: 'rgba(30,30,55,0.95)', border: '2px solid #3a3a5c',
           borderRadius: 0, padding: '8px 12px', display: 'flex', gap: 8,
           alignItems: 'center', direction: 'rtl',
-          fontFamily: '"Press Start 2P", cursive',
+          fontFamily: '"Heebo", "Segoe UI", sans-serif',
           boxShadow: 'inset -2px -2px 0 #0a0a1a, inset 2px 2px 0 #2a2a4a',
         }}>
           <span style={{ color: '#aaf', fontSize: 8, fontWeight: 600 }}>{t.editMode}</span>
@@ -3239,7 +3239,7 @@ export default function App() {
               style={{
                 background: 'rgba(255,80,80,0.3)', border: '2px solid rgba(255,80,80,0.5)',
                 borderRadius: 0, padding: '4px 8px', fontSize: 8, cursor: 'pointer', color: '#faa',
-                fontFamily: '"Press Start 2P", cursive',
+                fontFamily: '"Heebo", "Segoe UI", sans-serif',
                 boxShadow: 'inset -2px -2px 0 #0a0a1a, inset 2px 2px 0 #4a2a2a',
               }}
             >
@@ -3256,7 +3256,7 @@ export default function App() {
             style={{
               background: 'rgba(100,100,255,0.2)', border: '2px solid rgba(100,100,255,0.4)',
               borderRadius: 0, padding: '4px 8px', fontSize: 8, cursor: 'pointer', color: '#aaf',
-              fontFamily: '"Press Start 2P", cursive',
+              fontFamily: '"Heebo", "Segoe UI", sans-serif',
               boxShadow: 'inset -2px -2px 0 #0a0a1a, inset 2px 2px 0 #2a2a4a',
             }}
           >
@@ -3272,7 +3272,7 @@ export default function App() {
           maxHeight: 'calc(100vh - 160px)', overflowY: 'auto',
           background: 'rgba(30,30,55,0.95)', border: '2px solid #3a3a5c',
           borderRadius: 0, padding: 8, direction: 'rtl',
-          fontFamily: '"Press Start 2P", cursive',
+          fontFamily: '"Heebo", "Segoe UI", sans-serif',
           boxShadow: 'inset -2px -2px 0 #0a0a1a, inset 2px 2px 0 #2a2a4a',
         }}>
           <div style={{
@@ -3287,7 +3287,7 @@ export default function App() {
                   border: placementType === dt.type ? '2px solid rgba(100,100,255,0.6)' : '2px solid transparent',
                   borderRadius: 0, padding: '6px 4px', cursor: 'pointer',
                   display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2,
-                  color: '#ccc', fontSize: 7, fontFamily: '"Press Start 2P", cursive',
+                  color: '#ccc', fontSize: 7, fontFamily: '"Heebo", "Segoe UI", sans-serif',
                 }}
               >
                 <span style={{ fontSize: 18 }}>{dt.emoji}</span>
@@ -3304,7 +3304,7 @@ export default function App() {
           position: 'absolute', inset: 0, background: 'rgba(10,10,30,0.95)',
           display: 'flex', flexWrap: 'wrap', gap: 12, padding: 20,
           alignContent: 'flex-start', overflowY: 'auto',
-          fontFamily: '"Press Start 2P", cursive',
+          fontFamily: '"Heebo", "Segoe UI", sans-serif',
         }}>
           {agentDefs.map(a => (
             <div key={a.id} onClick={() => setSelectedId(prev => prev === a.id ? null : a.id)} style={{
@@ -3328,7 +3328,7 @@ export default function App() {
         position: 'absolute', bottom: 0, left: 0, right: 0,
         background: 'rgba(20,20,40,0.95)', borderTop: '2px solid #3a3a5c',
         padding: isCompact ? '4px 4px' : isMobile ? '6px 8px' : '8px 16px',
-        fontFamily: '"Press Start 2P", cursive',
+        fontFamily: '"Heebo", "Segoe UI", sans-serif',
         boxShadow: 'inset 0 2px 0 #2a2a4a',
         display: 'flex', gap: isCompact ? 2 : isMobile ? 6 : 12,
         justifyContent: isMobile ? 'flex-start' : 'center',
