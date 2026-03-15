@@ -647,31 +647,35 @@ function screenToTile(mx: number, my: number, ox: number, oy: number): [number, 
   return [Math.round(col), Math.round(row)]
 }
 
-// ── Asset loading system — sprites from v4 (128×128 isometric), future-proof for v6 ──
-const ASSET_VERSION = 'v4'  // Switch to 'v6' when Amir delivers
-const ASSET_BASE = `/assets/furniture/${ASSET_VERSION}`
+// ── Asset loading system — v6 primary (64×64), v4 fallback (128×128) ──
+const V6_BASE = '/assets/furniture/v6'
+const V4_BASE = '/assets/furniture/v4'
 
-// All v4 asset IDs — preloaded on startup
-const V4_ASSETS = {
-  // Floors (128×128 isometric diamond tiles)
-  floors: ['floor_wood', 'floor_marble', 'floor_carpet_warm', 'floor_carpet_gray'],
-  // Walls (128×128 isometric wall segments)
-  walls: ['wall_plain', 'wall_window', 'wall_door'],
-  // Furniture (128×128 isometric objects)
-  furniture: [
-    'cubicle_work', 'lounge_sofa', 'coffee_station', 'meeting_table',
-    'reception_desk', 'server_rack',
-  ],
-}
+// v6 assets (64×64 isometric pixel art — Amir's latest)
+const V6_ASSETS = [
+  // Floors
+  'floor_wood', 'floor_marble', 'floor_carpet_gray', 'floor_carpet_green', 'floor_carpet_dark',
+  // Walls
+  'wall_plain', 'wall_window', 'wall_door', 'wall_glass',
+  // Furniture
+  'bookshelf', 'manager_desk', 'meeting_table', 'plant_large', 'plant_small',
+  'printer', 'reception_desk', 'server_rack', 'water_cooler',
+]
 
-// Floor sprite mapping: floorType → v4 asset name (null = use flat color)
+// v4 fallback assets (128×128) — used when v6 version doesn't exist
+const V4_FALLBACK = [
+  'cubicle_work', 'lounge_sofa', 'coffee_station',
+  'floor_carpet_warm',  // v6 has warm→green, keep v4 warm
+]
+
+// Floor sprite mapping: floorType → asset name
 const FLOOR_SPRITE_MAP: Record<number, string | null> = {
   0: 'floor_wood',          // Open Space — parquet
   1: null,                  // stone (flat color fallback)
-  2: 'floor_carpet_warm',   // Lounge — warm carpet
-  3: null,                  // Meeting Room (flat color — dark blue)
+  2: 'floor_carpet_dark',   // Lounge — warm carpet (v6 dark carpet)
+  3: null,                  // Meeting Room (flat — dark blue)
   4: 'floor_marble',        // Reception — marble
-  5: null,                  // Dev Room (flat — dark, monitor glow)
+  5: null,                  // Dev Room (flat — dark monitor glow)
   6: 'floor_carpet_gray',   // Business Wing — gray carpet
   7: 'floor_carpet_gray',   // QA Corner — gray carpet
   8: 'floor_wood',          // Manager — wood
@@ -705,12 +709,16 @@ interface FurniturePlacement { asset: string; col: number; row: number; scale?: 
 const ROOM_FURNITURE: Record<RoomId, FurniturePlacement[]> = {
   reception: [
     { asset: 'reception_desk', col: 10, row: 1 },
+    { asset: 'plant_large', col: 2, row: 1 },
+    { asset: 'plant_large', col: 18, row: 1 },
+    { asset: 'water_cooler', col: 14, row: 1 },
   ],
   dev: [
     { asset: 'cubicle_work', col: 1, row: 4 },
     { asset: 'cubicle_work', col: 1, row: 7 },
     { asset: 'cubicle_work', col: 3, row: 4 },
     { asset: 'server_rack', col: 4, row: 8 },
+    { asset: 'plant_small', col: 5, row: 3 },
   ],
   openspace: [
     { asset: 'cubicle_work', col: 7, row: 4 },
@@ -719,19 +727,26 @@ const ROOM_FURNITURE: Record<RoomId, FurniturePlacement[]> = {
     { asset: 'cubicle_work', col: 10, row: 7 },
     { asset: 'cubicle_work', col: 13, row: 4 },
     { asset: 'cubicle_work', col: 13, row: 7 },
+    { asset: 'printer', col: 14, row: 8 },
+    { asset: 'water_cooler', col: 6, row: 8 },
+    { asset: 'plant_large', col: 14, row: 3 },
   ],
   biz: [
     { asset: 'cubicle_work', col: 16, row: 4 },
     { asset: 'cubicle_work', col: 16, row: 7 },
     { asset: 'cubicle_work', col: 18, row: 4 },
     { asset: 'cubicle_work', col: 18, row: 7 },
+    { asset: 'bookshelf', col: 20, row: 4 },
+    { asset: 'plant_small', col: 20, row: 8 },
   ],
   qa: [
     { asset: 'cubicle_work', col: 1, row: 11 },
     { asset: 'cubicle_work', col: 3, row: 11 },
+    { asset: 'printer', col: 4, row: 12 },
   ],
   meeting: [
     { asset: 'meeting_table', col: 17, row: 11 },
+    { asset: 'plant_small', col: 20, row: 10 },
   ],
   lounge: [
     { asset: 'lounge_sofa', col: 2, row: 15 },
@@ -739,36 +754,54 @@ const ROOM_FURNITURE: Record<RoomId, FurniturePlacement[]> = {
     { asset: 'lounge_sofa', col: 8, row: 15 },
     { asset: 'lounge_sofa', col: 8, row: 17 },
     { asset: 'coffee_station', col: 5, row: 15 },
+    { asset: 'water_cooler', col: 5, row: 17 },
+    { asset: 'plant_large', col: 12, row: 14 },
+    { asset: 'plant_small', col: 0, row: 14 },
   ],
   manager: [
-    { asset: 'cubicle_work', col: 17, row: 16 },
+    { asset: 'manager_desk', col: 17, row: 16 },
+    { asset: 'bookshelf', col: 20, row: 15 },
+    { asset: 'plant_large', col: 15, row: 18 },
   ],
 }
 
-// Image cache — all sprites loaded here
+// Image cache — v6 primary, v4 fallback
 const spriteCache: Record<string, HTMLImageElement> = {}
+const spriteSizes: Record<string, number> = {} // track native size for scaling
 let spritesInitialized = false
 
 function preloadSprites() {
   if (spritesInitialized) return
   spritesInitialized = true
 
-  const allAssets = [
-    ...V4_ASSETS.floors,
-    ...V4_ASSETS.walls,
-    ...V4_ASSETS.furniture,
-  ]
-  for (const name of allAssets) {
+  // Load v6 assets (64×64)
+  for (const name of V6_ASSETS) {
     const img = new Image()
-    img.src = `${ASSET_BASE}/${name}.png`
+    img.src = `${V6_BASE}/${name}.png`
     spriteCache[name] = img
+    spriteSizes[name] = 64
   }
-  console.log(`[Assets] Preloading ${allAssets.length} sprites from ${ASSET_BASE}`)
+
+  // Load v4 fallbacks (128×128) — only for assets not in v6
+  for (const name of V4_FALLBACK) {
+    if (!spriteCache[name]) {
+      const img = new Image()
+      img.src = `${V4_BASE}/${name}.png`
+      spriteCache[name] = img
+      spriteSizes[name] = 128
+    }
+  }
+
+  console.log(`[Assets] Preloading ${V6_ASSETS.length} v6 + ${V4_FALLBACK.length} v4 sprites`)
 }
 
 function getSprite(name: string): HTMLImageElement | null {
   const img = spriteCache[name]
   return (img?.complete && img.naturalWidth > 0) ? img : null
+}
+
+function getSpriteNativeSize(name: string): number {
+  return spriteSizes[name] ?? 64
 }
 
 // Legacy decoration/furniture images (keep existing system working)
@@ -1164,10 +1197,11 @@ function drawIsoTile(
   const spriteImg = spriteName ? getSprite(spriteName) : null
 
   if (spriteImg) {
-    // Sprite is 128×128 — draw scaled to tile size (TILE_W × TILE_H + extra height for depth)
-    const spriteScale = TILE_W / 128
-    const drawW = 128 * spriteScale
-    const drawH = 128 * spriteScale
+    // Draw sprite scaled to tile size — v6 is 64×64, v4 is 128×128
+    const native = getSpriteNativeSize(spriteName!)
+    const scale = TILE_W / native
+    const drawW = native * scale
+    const drawH = native * scale
     ctx.drawImage(spriteImg, sx - drawW / 2, sy - drawH / 2, drawW, drawH)
     return
   }
@@ -1937,9 +1971,11 @@ function drawScene(
       const scale = fp.scale ?? 1
       drawables.push({ sortY: fp.col + fp.row, draw: () => {
         if (sprite) {
-          // v4 sprites are 128×128; draw at tile scale with offset for height
-          const drawW = TILE_W * scale
-          const drawH = TILE_W * scale // square sprites
+          // Draw sprite: v6=64×64, v4=128×128 — scale to tile size
+          const native = getSpriteNativeSize(fp.asset)
+          const spriteScale = (TILE_W / native) * scale
+          const drawW = native * spriteScale
+          const drawH = native * spriteScale
           ctx.drawImage(sprite, fsx - drawW / 2, fsy - drawH + TILE_H / 2, drawW, drawH)
         } else {
           // Fallback: small colored diamond placeholder
@@ -1973,8 +2009,10 @@ function drawScene(
     if (seg.side === 'top') {
       drawables.push({ sortY: seg.col + seg.row - 1, draw: () => {
         if (wallSprite) {
-          const drawW = TILE_W
-          const drawH = TILE_W  // 128→64 scale
+          const native = getSpriteNativeSize(seg.sprite)
+          const wScale = TILE_W / native
+          const drawW = native * wScale
+          const drawH = native * wScale
           ctx.drawImage(wallSprite, wsx - drawW / 2, wsy - drawH + TILE_H / 4, drawW, drawH)
         } else {
           // Fallback: thin isometric wall line
@@ -1990,9 +2028,11 @@ function drawScene(
     } else if (seg.side === 'left') {
       drawables.push({ sortY: seg.col + seg.row - 0.5, draw: () => {
         if (wallSprite) {
-          const drawW = TILE_W
-          const drawH = TILE_W
-          ctx.drawImage(wallSprite, wsx - drawW, wsy - drawH / 2, drawW, drawH)
+          const native2 = getSpriteNativeSize(seg.sprite)
+          const wScale2 = TILE_W / native2
+          const drawW2 = native2 * wScale2
+          const drawH2 = native2 * wScale2
+          ctx.drawImage(wallSprite, wsx - drawW2, wsy - drawH2 / 2, drawW2, drawH2)
         } else {
           ctx.strokeStyle = 'rgba(255,255,255,0.1)'
           ctx.lineWidth = 2
