@@ -26,6 +26,16 @@ const translations = {
     errorZone: '🐛 שגיאות',
     currentTask: 'משימה נוכחית',
     language: 'שפה',
+    attachFile: 'צרף קובץ',
+    recordVoice: 'הקלט קול',
+    stopRecording: 'עצור הקלטה',
+    chatWith: 'שיחה עם',
+    agents: 'סוכנים',
+    settings: 'הגדרות',
+    noAgents: 'אין סוכנים מחוברים',
+    reception: 'קבלה',
+    coffeeCorner: 'פינת קפה',
+    meetingRoom: 'חדר ישיבות',
   },
   en: {
     virtualOffice: 'Virtual Office',
@@ -50,6 +60,16 @@ const translations = {
     errorZone: '🐛 Errors',
     currentTask: 'Current Task',
     language: 'Language',
+    attachFile: 'Attach file',
+    recordVoice: 'Record voice',
+    stopRecording: 'Stop recording',
+    chatWith: 'Chat with',
+    agents: 'Agents',
+    settings: 'Settings',
+    noAgents: 'No agents connected',
+    reception: 'Reception',
+    coffeeCorner: 'Coffee Corner',
+    meetingRoom: 'Meeting Room',
   },
 } as const
 
@@ -1601,6 +1621,7 @@ function getIsoBounds() {
 
 // ── Main scene drawing ──
 
+interface I18nLabels { loungeZone: string; workZone: string; errorZone: string; virtualOffice: string }
 function drawScene(
   ctx: CanvasRenderingContext2D,
   w: number, h: number,
@@ -1614,6 +1635,7 @@ function drawScene(
   decorations?: DecorationWithId[],
   editState?: EditState,
   allAgentDefs?: AgentDef[],
+  i18nLabels?: I18nLabels,
 ) {
   const f = fonts ?? getCanvasFontSizes('desktop')
   const decos = decorations ?? DEFAULT_DECORATIONS.map(d => ({ ...d, _id: 0 }))
@@ -1633,18 +1655,19 @@ function drawScene(
   ctx.fillStyle = '#7a7aaa'
   ctx.font = `bold ${f.title}px "Heebo", "Segoe UI", sans-serif`
   ctx.textAlign = 'center'
-  ctx.fillText('🏢 Virtual Office', w / 2, 28)
+  const labels = i18nLabels ?? { loungeZone: '☕ Lounge', workZone: '💻 Work Zone', errorZone: '🐛 Errors', virtualOffice: '🏢 Virtual Office' }
+  ctx.fillText(labels.virtualOffice, w / 2, 28)
 
   // Zone labels — centered in each horizontal zone
   ctx.font = `${f.zone}px "Heebo", "Segoe UI", sans-serif`
   ctx.fillStyle = 'rgba(255,255,255,0.25)'
   const midCol = MAP_COLS / 2
   const [lx, ly] = toIso(midCol, LOUNGE_START_ROW)
-  ctx.fillText('☕ Lounge', ox + lx, oy + ly - 10)
+  ctx.fillText(labels.loungeZone, ox + lx, oy + ly - 10)
   const [wx, wy] = toIso(midCol, WORK_START_ROW)
-  ctx.fillText('💻 Work Zone', ox + wx, oy + wy - 10)
+  ctx.fillText(labels.workZone, ox + wx, oy + wy - 10)
   const [bx, by] = toIso(midCol, ERROR_START_ROW)
-  ctx.fillText('🐛 Errors', ox + bx, oy + by - 10)
+  ctx.fillText(labels.errorZone, ox + bx, oy + by - 10)
 
   // --- Floor tilemap --- (use FLOOR_MAP dimensions, not MAP_ROWS/COLS, to avoid stale mismatch)
   for (let row = 0; row < FLOOR_MAP.length; row++) {
@@ -1826,9 +1849,8 @@ function hitTestAgent(
 
 // ── Settings / Onboarding Screen ──
 
-function SettingsScreen({ onConnect, onDemo, t, dir, toggleLang, lang }: {
+function SettingsScreen({ onConnect, t, dir, toggleLang, lang }: {
   onConnect: (token: string, url: string) => void
-  onDemo: () => void
   t: typeof translations[Lang]
   dir: string
   toggleLang: () => void
@@ -1918,18 +1940,7 @@ function SettingsScreen({ onConnect, onDemo, t, dir, toggleLang, lang }: {
           {t.connect}
         </button>
 
-        <div style={{ textAlign: 'center' }}>
-          <button
-            onClick={onDemo}
-            style={{
-              background: 'none', border: 'none', color: '#7a7aff',
-              fontSize: 13, cursor: 'pointer', textDecoration: 'underline',
-              fontFamily: '"Heebo", "Segoe UI", sans-serif',
-            }}
-          >
-            {t.demoMode}
-          </button>
-        </div>
+
       </div>
     </div>
   )
@@ -2085,6 +2096,8 @@ const NOTIFICATION_DURATION_MS = 5_000
 // ── React App ──
 export default function App() {
   const { lang, t, toggleLang, dir } = useI18n()
+  const i18nRef = useRef(t)
+  i18nRef.current = t
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const [hoverAgentId, _setHoverAgentId] = useState<string | null>(null)
   const hoverAgentIdRef = useRef<string | null>(null)
@@ -2158,6 +2171,7 @@ export default function App() {
 
   // Loading state
   const [canvasReady, setCanvasReady] = useState(false)
+  const [agentsLoaded, setAgentsLoaded] = useState(false)
   // Sound state
   const [soundEnabled, setSoundEnabled] = useState(false)
   // Notification state
@@ -2284,6 +2298,7 @@ export default function App() {
         // First poll: discover agents and rebuild — include ALL known agents
         if (!discoveredRef.current && sessionEntries.length > 0) {
           discoveredRef.current = true
+          setAgentsLoaded(true)
           const discoveredIds = new Set(sessionEntries.map(([id]) => id))
           const newDefs: AgentDef[] = sessionEntries.map(([id, s], i) => {
             const updatedAt = new Date(s.updatedAt).getTime()
@@ -2522,7 +2537,8 @@ export default function App() {
           ? { type: placementTypeRef.current, col: hoverTileRef.current[0], row: hoverTileRef.current[1] }
           : null,
       }
-      drawScene(offCtx, w, h, t, agents, hoverAgentIdRef.current, selectedIdRef.current, panRef.current.x, panRef.current.y, fonts, decorationsRef.current, editState, agentDefsRef.current)
+      const tr = i18nRef.current
+      drawScene(offCtx, w, h, t, agents, hoverAgentIdRef.current, selectedIdRef.current, panRef.current.x, panRef.current.y, fonts, decorationsRef.current, editState, agentDefsRef.current, { loungeZone: tr.loungeZone, workZone: tr.workZone, errorZone: tr.errorZone, virtualOffice: `🏢 ${tr.virtualOffice}` })
 
       offCtx.restore()
 
@@ -2825,9 +2841,7 @@ export default function App() {
     setShowSettings(false)
   }, [])
 
-  const handleDemo = useCallback(() => {
-    setShowSettings(false)
-  }, [])
+  
 
   // Escape key handler
   useEffect(() => {
@@ -2929,7 +2943,7 @@ export default function App() {
 
     // Show settings screen
   if (showSettings) {
-    return <SettingsScreen onConnect={handleConnect} onDemo={handleDemo} t={t} dir={dir} toggleLang={toggleLang} lang={lang} />
+    return <SettingsScreen onConnect={handleConnect} t={t} dir={dir} toggleLang={toggleLang} lang={lang} />
   }
 
   return (
@@ -2963,7 +2977,7 @@ export default function App() {
         }
       `}</style>
       {/* Loading overlay */}
-      {!canvasReady && (
+      {(!canvasReady || !agentsLoaded) && !showSettings && (
         <div style={{
           position: 'absolute', inset: 0, zIndex: 50,
           background: '#1a1a2e', display: 'flex', flexDirection: 'column',
@@ -2983,6 +2997,14 @@ export default function App() {
           <div style={{ color: '#7a7aaa', fontSize: 13 }}>{t.connectingAgents}</div>
         </div>
       )}
+      {/* Language toggle — main UI */}
+      <button onClick={toggleLang} style={{
+        position: 'absolute', top: 12, left: 12, zIndex: 40,
+        background: 'rgba(26, 26, 46, 0.8)', border: '1px solid #3a3a5c',
+        borderRadius: 8, padding: '6px 12px', color: '#c0c0e0', fontSize: 13,
+        cursor: 'pointer', fontFamily: '"Heebo", sans-serif', backdropFilter: 'blur(8px)',
+        transition: 'background 0.2s',
+      }}>{lang === 'he' ? 'EN' : 'עב'}</button>
       <canvas
         ref={canvasRef}
         onClick={handleClick}
@@ -3304,6 +3326,7 @@ export default function App() {
             compact={isCompact}
             onSend={handleSendToAgent}
             onFetchHistory={handleFetchHistory}
+            t={t}
           />
         </div>
       )}
@@ -3487,15 +3510,20 @@ function formatTime(ts: number): string {
   return d.toLocaleTimeString('he-IL', { hour: '2-digit', minute: '2-digit' })
 }
 
-function ChatInput({ agentId, agentColor, compact, onSend, onFetchHistory }: {
+function ChatInput({ agentId, agentColor, compact, onSend, onFetchHistory, t }: {
   agentId: string
   agentColor: string
   compact?: boolean
   onSend?: (agentId: string, message: string) => Promise<void> | void
   onFetchHistory?: (agentId: string, after?: number) => Promise<ChatMessage[]>
+  t: typeof translations[Lang]
 }) {
   const [text, setText] = useState('')
   const [status, setStatus] = useState<SendStatus>('idle')
+  const [isRecording, setIsRecording] = useState(false)
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null)
+  const audioChunksRef = useRef<Blob[]>([])
+  const fileInputRef = useRef<HTMLInputElement>(null)
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [polling, setPolling] = useState(false)
   const [streamText, setStreamText] = useState('')
@@ -3646,9 +3674,65 @@ function ChatInput({ agentId, agentColor, compact, onSend, onFetchHistory }: {
     }
   }, [text, status, agentId, onSend])
 
-  const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
+    const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSend() }
   }, [handleSend])
+
+  // Voice recording
+  const handleMicToggle = useCallback(async () => {
+    if (isRecording) {
+      // Stop recording
+      mediaRecorderRef.current?.stop()
+      setIsRecording(false)
+      return
+    }
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+      const recorder = new MediaRecorder(stream, { mimeType: 'audio/webm;codecs=opus' })
+      audioChunksRef.current = []
+      recorder.ondataavailable = (e) => { if (e.data.size > 0) audioChunksRef.current.push(e.data) }
+      recorder.onstop = async () => {
+        stream.getTracks().forEach(t => t.stop())
+        const blob = new Blob(audioChunksRef.current, { type: 'audio/webm' })
+        if (blob.size < 100) return
+        // Transcribe
+        setStatus('sending')
+        try {
+          const backendBase = window.location.port === '5173' ? 'http://localhost:3001' : ''
+          const form = new FormData()
+          form.append('audio', blob, 'recording.webm')
+          const res = await fetch(`${backendBase}/api/transcribe`, { method: 'POST', body: form })
+          const data = await res.json()
+          if (data.ok && data.text) {
+            setText(prev => prev ? `${prev} ${data.text}` : data.text)
+          }
+        } catch (err) { console.error('Transcription failed:', err) }
+        setStatus('idle')
+      }
+      recorder.start()
+      mediaRecorderRef.current = recorder
+      setIsRecording(true)
+    } catch (err) { console.error('Mic access denied:', err) }
+  }, [isRecording])
+
+  // File attachment
+  const handleFileSelect = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+    // For images, convert to base64 and send as text with markdown image
+    if (file.type.startsWith('image/')) {
+      const reader = new FileReader()
+      reader.onload = () => {
+        const dataUrl = reader.result as string
+        const attachText = `📎 [${file.name}]\n![${file.name}](${dataUrl})`
+        setText(prev => prev ? `${prev}\n${attachText}` : attachText)
+      }
+      reader.readAsDataURL(file)
+    } else {
+      setText(prev => prev ? `${prev}\n📎 ${file.name}` : `📎 ${file.name}`)
+    }
+    e.target.value = '' // reset
+  }, [])
 
   return (
     <div style={{
@@ -3665,7 +3749,7 @@ function ChatInput({ agentId, agentColor, compact, onSend, onFetchHistory }: {
       }}>
         {messages.length === 0 && !streamText && (
           <div style={{ textAlign: 'center', color: '#555', fontSize: 13, marginTop: 40 }}>
-            💬 שלח הודעה להתחיל שיחה
+            💬 {t.sendMessage}
           </div>
         )}
         {messages.map(msg => {
@@ -3753,7 +3837,7 @@ function ChatInput({ agentId, agentColor, compact, onSend, onFetchHistory }: {
           value={text}
           onChange={e => setText(e.target.value)}
           onKeyDown={handleKeyDown}
-          placeholder="הקלד הודעה..."
+          placeholder={t.typeMessage}
           disabled={status === 'sending'}
           rows={1}
           style={{
@@ -3774,6 +3858,35 @@ function ChatInput({ agentId, agentColor, compact, onSend, onFetchHistory }: {
             el.style.height = Math.min(el.scrollHeight, 100) + 'px'
           }}
         />
+        {/* Attachment button */}
+        <input type="file" ref={fileInputRef} onChange={handleFileSelect} style={{ display: 'none' }}
+          accept="image/*,video/*,.pdf,.doc,.docx,.txt" />
+        <button
+          onClick={() => fileInputRef.current?.click()}
+          style={{
+            width: 36, height: 36, borderRadius: 8, border: 'none',
+            background: 'rgba(255,255,255,0.06)', color: '#888',
+            fontSize: 18, cursor: 'pointer', flexShrink: 0,
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            transition: 'background 0.2s',
+          }}
+          title={t.attachFile}
+        >📎</button>
+        {/* Mic button */}
+        <button
+          onClick={handleMicToggle}
+          style={{
+            width: 36, height: 36, borderRadius: 8, border: 'none',
+            background: isRecording ? '#ef4444' : 'rgba(255,255,255,0.06)',
+            color: isRecording ? '#fff' : '#888',
+            fontSize: 18, cursor: 'pointer', flexShrink: 0,
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            transition: 'background 0.3s',
+            animation: isRecording ? 'chatBlink 1s ease-in-out infinite' : 'none',
+          }}
+          title={isRecording ? t.stopRecording : t.recordVoice}
+        >{isRecording ? '⏹' : '🎤'}</button>
+        {/* Send button */}
         <button
           onClick={handleSend}
           disabled={!text.trim() || status === 'sending'}
