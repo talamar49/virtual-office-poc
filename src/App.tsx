@@ -114,18 +114,21 @@ function computeGridSize(agentCount: number) {
   // All zones span full width
   const zoneWidth = AGENTS_PER_ROW * COLS_PER_AGENT + 2
 
-  // Lounge zone (top) — room for ALL agents (worst case: all idle)
-  const loungeAgentRows = Math.ceil(n / AGENTS_PER_ROW)
+  // Zone sizing: not all agents will be in every zone simultaneously
+  // Lounge (idle/offline): ~50% of agents at most
+  const maxLoungeAgents = Math.max(2, Math.ceil(n * 0.5))
+  const loungeAgentRows = Math.ceil(maxLoungeAgents / AGENTS_PER_ROW)
   LOUNGE_START_ROW = 1
   LOUNGE_END_ROW = LOUNGE_START_ROW + loungeAgentRows * ROWS_PER_AGENT + 1
 
-  // Work zone (middle) — room for ALL agents
-  const workAgentRows = Math.ceil(n / AGENTS_PER_ROW)
+  // Work (active/working): ~70% of agents at most
+  const maxWorkAgents = Math.max(2, Math.ceil(n * 0.7))
+  const workAgentRows = Math.ceil(maxWorkAgents / AGENTS_PER_ROW)
   WORK_START_ROW = LOUNGE_END_ROW + 1
   WORK_END_ROW = WORK_START_ROW + workAgentRows * ROWS_PER_AGENT + 1
 
-  // Error zone (bottom) — thin strip, max 1-2 rows of agents
-  const errorAgentRows = Math.max(1, Math.ceil(Math.min(n, AGENTS_PER_ROW * 2) / AGENTS_PER_ROW))
+  // Error zone (bottom) — thin strip, max 1-2 rows
+  const errorAgentRows = Math.max(1, Math.ceil(Math.min(n, AGENTS_PER_ROW) / AGENTS_PER_ROW))
   ERROR_START_ROW = WORK_END_ROW + 1
   ERROR_END_ROW = ERROR_START_ROW + errorAgentRows * ROWS_PER_AGENT
 
