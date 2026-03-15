@@ -34,21 +34,59 @@ if [ "$NODE_VER" = "fail" ]; then
   exit 1
 fi
 
-# Gateway config
+# Gateway config — auto-detect from OpenClaw config
 echo -e "${YELLOW}🔑 OpenClaw Gateway Configuration${NC}"
 echo ""
-echo "To get your Gateway token, run:"
-echo -e "  ${CYAN}openclaw gateway status${NC}"
-echo "or check: ~/.openclaw/openclaw.json → gateway.auth.token"
-echo ""
 
-read -rp "Gateway URL [http://127.0.0.1:18789]: " GATEWAY_URL
-GATEWAY_URL="${GATEWAY_URL:-http://127.0.0.1:18789}"
+OPENCLAW_CONFIG="$HOME/.openclaw/openclaw.json"
+AUTO_TOKEN=""
+AUTO_URL=""
 
-read -rp "Gateway Token: " GATEWAY_TOKEN
-if [ -z "$GATEWAY_TOKEN" ]; then
-  echo -e "${RED}❌ Gateway token is required.${NC}"
-  exit 1
+if [ -f "$OPENCLAW_CONFIG" ] && command -v python3 &>/dev/null; then
+  AUTO_TOKEN=$(python3 -c "
+import json, sys
+try:
+    d = json.load(open('$OPENCLAW_CONFIG'))
+    print(d.get('gateway',{}).get('auth',{}).get('token',''))
+except: pass
+" 2>/dev/null)
+
+  AUTO_PORT=$(python3 -c "
+import json, sys
+try:
+    d = json.load(open('$OPENCLAW_CONFIG'))
+    print(d.get('gateway',{}).get('port', 18789))
+except: print(18789)
+" 2>/dev/null)
+
+  AUTO_URL="http://127.0.0.1:${AUTO_PORT}"
+fi
+
+if [ -n "$AUTO_TOKEN" ]; then
+  echo -e "  ${GREEN}✅ OpenClaw config detected — token extracted automatically${NC}"
+  echo -e "  Gateway URL:  ${CYAN}$AUTO_URL${NC}"
+  echo -e "  Token:        ${CYAN}${AUTO_TOKEN:0:12}...${NC}"
+  echo ""
+  read -rp "Use these settings? [Y/n]: " USE_AUTO
+  if [[ "$USE_AUTO" =~ ^[Nn]$ ]]; then
+    AUTO_TOKEN=""
+  fi
+fi
+
+if [ -z "$AUTO_TOKEN" ]; then
+  echo "Couldn't auto-detect. Please enter manually:"
+  echo ""
+  read -rp "Gateway URL [http://127.0.0.1:18789]: " GATEWAY_URL
+  GATEWAY_URL="${GATEWAY_URL:-http://127.0.0.1:18789}"
+
+  read -rp "Gateway Token: " GATEWAY_TOKEN
+  if [ -z "$GATEWAY_TOKEN" ]; then
+    echo -e "${RED}❌ Gateway token is required.${NC}"
+    exit 1
+  fi
+else
+  GATEWAY_URL="$AUTO_URL"
+  GATEWAY_TOKEN="$AUTO_TOKEN"
 fi
 
 read -rp "Server port [3001]: " PORT
