@@ -206,20 +206,246 @@ interface AgentRuntime {
 const AGENT_MOVE_SPEED = 3 // tiles per second
 
 // ── Room system ──
-type RoomId = 'reception' | 'dev' | 'openspace' | 'biz' | 'qa' | 'meeting' | 'lounge' | 'manager'
+type RoomId = 'reception' | 'dev' | 'openspace' | 'biz' | 'qa' | 'meeting' | 'meeting2' | 'lounge' | 'manager' | 'rnd' | 'training' | 'library'
 
 interface Room {
   id: RoomId
   label: string
   emoji: string
-  sign: string          // sign text displayed on the wall
-  floorType: number     // index into FLOOR_STYLES
+  sign: string
+  floorType: number
   startCol: number
   endCol: number
   startRow: number
   endRow: number
-  seats: [number, number][]  // cubicle/seat positions within the room
-  loungeSeats?: [number, number][] // sofa positions (lounge only)
+  seats: [number, number][]
+  loungeSeats?: [number, number][]
+}
+
+// ── Office sizing — 6 tiers ──
+type OfficeSize = 'XS' | 'S' | 'M' | 'L' | 'XL' | 'XXL'
+
+function getOfficeSize(agentCount: number): OfficeSize {
+  if (agentCount <= 5) return 'XS'
+  if (agentCount <= 10) return 'S'
+  if (agentCount <= 20) return 'M'
+  if (agentCount <= 30) return 'L'
+  if (agentCount <= 40) return 'XL'
+  return 'XXL'
+}
+
+let currentOfficeSize: OfficeSize = 'L'
+
+// Helper: generate N lounge seats in a grid within bounds
+function generateLoungeSeats(count: number, startCol: number, endCol: number, startRow: number, endRow: number): [number, number][] {
+  const seats: [number, number][] = []
+  const cols = Math.floor((endCol - startCol) / 3)
+  for (let i = 0; i < count && seats.length < count; i++) {
+    const c = startCol + 1 + (i % cols) * 3
+    const r = startRow + 1 + Math.floor(i / cols) * 2
+    if (c <= endCol && r <= endRow) seats.push([c, r])
+  }
+  return seats
+}
+
+// Helper: generate cubicle seats in grid (cols × rows, spaced 3 apart)
+function generateSeats(count: number, startCol: number, startRow: number, maxCols: number): [number, number][] {
+  const seats: [number, number][] = []
+  for (let i = 0; i < count; i++) {
+    const c = startCol + (i % maxCols) * 3
+    const r = startRow + Math.floor(i / maxCols) * 3
+    seats.push([c, r])
+  }
+  return seats
+}
+
+// ── Layout definitions per office size ──
+interface OfficeLayout {
+  gridCols: number
+  gridRows: number
+  rooms: Room[]
+  maxAgents: number
+}
+
+function buildLayout_XS(): OfficeLayout {
+  return {
+    gridCols: 12, gridRows: 10, maxAgents: 5,
+    rooms: [
+      { id: 'reception', label: 'קבלה', emoji: '📋', sign: 'OpenClaw HQ',
+        floorType: 4, startCol: 0, endCol: 11, startRow: 0, endRow: 1, seats: [] },
+      { id: 'openspace', label: 'Open Space', emoji: '🏢', sign: '',
+        floorType: 0, startCol: 0, endCol: 11, startRow: 2, endRow: 7,
+        seats: generateSeats(5, 1, 3, 4) },
+      { id: 'lounge', label: 'Lounge', emoji: '☕', sign: '☕ Lounge',
+        floorType: 2, startCol: 0, endCol: 11, startRow: 8, endRow: 9,
+        seats: [], loungeSeats: generateLoungeSeats(5, 0, 11, 8, 9) },
+    ],
+  }
+}
+
+function buildLayout_S(): OfficeLayout {
+  return {
+    gridCols: 14, gridRows: 14, maxAgents: 10,
+    rooms: [
+      { id: 'reception', label: 'קבלה', emoji: '📋', sign: 'OpenClaw HQ',
+        floorType: 4, startCol: 0, endCol: 13, startRow: 0, endRow: 1, seats: [] },
+      { id: 'openspace', label: 'Open Space', emoji: '🏢', sign: '',
+        floorType: 0, startCol: 0, endCol: 13, startRow: 2, endRow: 9,
+        seats: generateSeats(10, 1, 3, 5) },
+      { id: 'lounge', label: 'Lounge', emoji: '☕', sign: '☕ Lounge',
+        floorType: 2, startCol: 0, endCol: 13, startRow: 10, endRow: 13,
+        seats: [], loungeSeats: generateLoungeSeats(10, 0, 13, 10, 13) },
+    ],
+  }
+}
+
+function buildLayout_M(): OfficeLayout {
+  return {
+    gridCols: 21, gridRows: 20, maxAgents: 20,
+    rooms: [
+      { id: 'reception', label: 'קבלה', emoji: '📋', sign: 'OpenClaw HQ',
+        floorType: 4, startCol: 0, endCol: 20, startRow: 0, endRow: 2, seats: [] },
+      { id: 'dev', label: 'Dev Team', emoji: '💻', sign: '⚡ Dev Team',
+        floorType: 5, startCol: 0, endCol: 6, startRow: 3, endRow: 9,
+        seats: generateSeats(4, 1, 4, 2) },
+      { id: 'openspace', label: 'Open Space', emoji: '🏢', sign: '',
+        floorType: 0, startCol: 7, endCol: 20, startRow: 3, endRow: 13,
+        seats: generateSeats(12, 8, 4, 5) },
+      { id: 'qa', label: 'QA Lab', emoji: '🔍', sign: '🔍 QA Lab',
+        floorType: 7, startCol: 0, endCol: 6, startRow: 10, endRow: 13,
+        seats: generateSeats(2, 1, 11, 2) },
+      { id: 'lounge', label: 'Lounge', emoji: '☕', sign: '☕ Lounge',
+        floorType: 2, startCol: 0, endCol: 20, startRow: 14, endRow: 19,
+        seats: [], loungeSeats: generateLoungeSeats(20, 0, 20, 14, 19) },
+    ],
+  }
+}
+
+function buildLayout_L(): OfficeLayout {
+  return {
+    gridCols: 25, gridRows: 22, maxAgents: 30,
+    rooms: [
+      { id: 'reception', label: 'קבלה', emoji: '📋', sign: 'OpenClaw HQ',
+        floorType: 4, startCol: 0, endCol: 24, startRow: 0, endRow: 2, seats: [] },
+      { id: 'dev', label: 'Dev Team', emoji: '💻', sign: '⚡ Dev Team',
+        floorType: 5, startCol: 0, endCol: 6, startRow: 3, endRow: 11,
+        seats: generateSeats(6, 1, 4, 2) },
+      { id: 'openspace', label: 'Open Space', emoji: '🏢', sign: '',
+        floorType: 0, startCol: 7, endCol: 16, startRow: 3, endRow: 15,
+        seats: generateSeats(12, 8, 4, 3) },
+      { id: 'biz', label: 'Business', emoji: '📈', sign: '📊 Business',
+        floorType: 6, startCol: 17, endCol: 24, startRow: 3, endRow: 11,
+        seats: generateSeats(6, 18, 4, 2) },
+      { id: 'qa', label: 'QA Lab', emoji: '🔍', sign: '🔍 QA Lab',
+        floorType: 7, startCol: 0, endCol: 6, startRow: 12, endRow: 15,
+        seats: generateSeats(3, 1, 13, 2) },
+      { id: 'meeting', label: 'Meeting Room', emoji: '🏢', sign: '',
+        floorType: 3, startCol: 17, endCol: 24, startRow: 12, endRow: 15, seats: [] },
+      { id: 'lounge', label: 'Lounge', emoji: '☕', sign: '☕ Lounge',
+        floorType: 2, startCol: 0, endCol: 16, startRow: 16, endRow: 21,
+        seats: [], loungeSeats: generateLoungeSeats(30, 0, 16, 16, 21) },
+      { id: 'manager', label: 'Manager', emoji: '🐻', sign: '',
+        floorType: 8, startCol: 17, endCol: 24, startRow: 16, endRow: 21,
+        seats: [[19, 18]] },
+    ],
+  }
+}
+
+function buildLayout_XL(): OfficeLayout {
+  return {
+    gridCols: 30, gridRows: 26, maxAgents: 40,
+    rooms: [
+      { id: 'reception', label: 'קבלה', emoji: '📋', sign: 'OpenClaw HQ',
+        floorType: 4, startCol: 0, endCol: 29, startRow: 0, endRow: 2, seats: [] },
+      { id: 'dev', label: 'Dev Team', emoji: '💻', sign: '⚡ Dev Team',
+        floorType: 5, startCol: 0, endCol: 7, startRow: 3, endRow: 13,
+        seats: generateSeats(8, 1, 4, 2) },
+      { id: 'openspace', label: 'Open Space', emoji: '🏢', sign: '',
+        floorType: 0, startCol: 8, endCol: 17, startRow: 3, endRow: 17,
+        seats: generateSeats(15, 9, 4, 3) },
+      { id: 'biz', label: 'Business', emoji: '📈', sign: '📊 Business',
+        floorType: 6, startCol: 18, endCol: 23, startRow: 3, endRow: 13,
+        seats: generateSeats(8, 19, 4, 2) },
+      { id: 'rnd', label: 'R&D', emoji: '🧪', sign: '🧪 R&D',
+        floorType: 5, startCol: 24, endCol: 29, startRow: 3, endRow: 13,
+        seats: generateSeats(8, 25, 4, 2) },
+      { id: 'qa', label: 'QA Lab', emoji: '🔍', sign: '🔍 QA Lab',
+        floorType: 7, startCol: 0, endCol: 7, startRow: 14, endRow: 17,
+        seats: generateSeats(4, 1, 15, 2) },
+      { id: 'meeting', label: 'Meeting Room', emoji: '🏢', sign: '',
+        floorType: 3, startCol: 18, endCol: 23, startRow: 14, endRow: 17, seats: [] },
+      { id: 'meeting2', label: 'Meeting 2', emoji: '🏢', sign: '',
+        floorType: 3, startCol: 24, endCol: 29, startRow: 14, endRow: 17, seats: [] },
+      { id: 'lounge', label: 'Lounge', emoji: '☕', sign: '☕ Lounge',
+        floorType: 2, startCol: 0, endCol: 20, startRow: 18, endRow: 25,
+        seats: [], loungeSeats: generateLoungeSeats(40, 0, 20, 18, 25) },
+      { id: 'manager', label: 'Manager', emoji: '🐻', sign: '',
+        floorType: 8, startCol: 21, endCol: 29, startRow: 18, endRow: 25,
+        seats: [[23, 20], [26, 20]] },
+    ],
+  }
+}
+
+function buildLayout_XXL(): OfficeLayout {
+  return {
+    gridCols: 34, gridRows: 30, maxAgents: 50,
+    rooms: [
+      { id: 'reception', label: 'קבלה', emoji: '📋', sign: 'OpenClaw HQ',
+        floorType: 4, startCol: 0, endCol: 33, startRow: 0, endRow: 3, seats: [] },
+      { id: 'dev', label: 'Dev Team', emoji: '💻', sign: '⚡ Dev Team',
+        floorType: 5, startCol: 0, endCol: 7, startRow: 4, endRow: 15,
+        seats: generateSeats(10, 1, 5, 2) },
+      { id: 'openspace', label: 'Open Space', emoji: '🏢', sign: '',
+        floorType: 0, startCol: 8, endCol: 17, startRow: 4, endRow: 19,
+        seats: generateSeats(16, 9, 5, 3) },
+      { id: 'biz', label: 'Business', emoji: '📈', sign: '📊 Business',
+        floorType: 6, startCol: 18, endCol: 23, startRow: 4, endRow: 15,
+        seats: generateSeats(8, 19, 5, 2) },
+      { id: 'rnd', label: 'R&D', emoji: '🧪', sign: '🧪 R&D',
+        floorType: 5, startCol: 24, endCol: 29, startRow: 4, endRow: 15,
+        seats: generateSeats(8, 25, 5, 2) },
+      { id: 'training', label: 'Training', emoji: '🎓', sign: '🎓 Training',
+        floorType: 0, startCol: 30, endCol: 33, startRow: 4, endRow: 15,
+        seats: generateSeats(8, 31, 5, 1) },
+      { id: 'qa', label: 'QA Lab', emoji: '🔍', sign: '🔍 QA Lab',
+        floorType: 7, startCol: 0, endCol: 7, startRow: 16, endRow: 19,
+        seats: generateSeats(4, 1, 17, 2) },
+      { id: 'meeting', label: 'Meeting Room', emoji: '🏢', sign: '',
+        floorType: 3, startCol: 18, endCol: 23, startRow: 16, endRow: 19, seats: [] },
+      { id: 'meeting2', label: 'Meeting 2', emoji: '🏢', sign: '',
+        floorType: 3, startCol: 24, endCol: 29, startRow: 16, endRow: 19, seats: [] },
+      { id: 'library', label: 'Library', emoji: '📚', sign: '📚 Library',
+        floorType: 8, startCol: 30, endCol: 33, startRow: 16, endRow: 19, seats: [] },
+      { id: 'lounge', label: 'Lounge', emoji: '☕', sign: '☕ Lounge',
+        floorType: 2, startCol: 0, endCol: 24, startRow: 20, endRow: 29,
+        seats: [], loungeSeats: generateLoungeSeats(50, 0, 24, 20, 29) },
+      { id: 'manager', label: 'Manager', emoji: '🐻', sign: '',
+        floorType: 8, startCol: 25, endCol: 33, startRow: 20, endRow: 29,
+        seats: [[27, 22], [30, 22], [27, 26]] },
+    ],
+  }
+}
+
+const LAYOUT_BUILDERS: Record<OfficeSize, () => OfficeLayout> = {
+  XS: buildLayout_XS, S: buildLayout_S, M: buildLayout_M,
+  L: buildLayout_L, XL: buildLayout_XL, XXL: buildLayout_XXL,
+}
+
+// Active layout — mutable, rebuilt when office size changes
+let activeLayout: OfficeLayout = buildLayout_L()
+const ROOMS: Room[] = [...activeLayout.rooms]
+const ROOM_MAP = new Map<RoomId, Room>(ROOMS.map(r => [r.id, r]))
+
+function applyLayout(layout: OfficeLayout) {
+  activeLayout = layout
+  ROOMS.length = 0
+  ROOMS.push(...layout.rooms)
+  ROOM_MAP.clear()
+  layout.rooms.forEach(r => ROOM_MAP.set(r.id, r))
+  MAP_COLS = layout.gridCols
+  MAP_ROWS = layout.gridRows
+  currentOfficeSize = getOfficeSize(layout.maxAgents)
+  console.log(`[Office] Applied layout: ${currentOfficeSize} (${MAP_COLS}×${MAP_ROWS}, ${ROOMS.length} rooms, max ${layout.maxAgents} agents)`)
 }
 
 // Team assignments — which agents belong to which work room
@@ -231,38 +457,11 @@ const TEAM_ROOMS: Record<string, RoomId> = {
   yogi: 'manager',
 }
 
-// Default room for unknown agents
+// Default room for unknown agents — falls back to openspace if room doesn't exist in current layout
 function getWorkRoom(agentId: string): RoomId {
-  return TEAM_ROOMS[agentId] || 'openspace'
+  const preferred = TEAM_ROOMS[agentId] || 'openspace'
+  return ROOM_MAP.has(preferred) ? preferred : 'openspace'
 }
-
-// Room definitions — fixed layout
-const ROOMS: Room[] = [
-  { id: 'reception', label: 'קבלה', emoji: '📋', sign: 'OpenClaw HQ',
-    floorType: 4, startCol: 0, endCol: 20, startRow: 0, endRow: 2, seats: [] },
-  { id: 'dev', label: 'Dev Team', emoji: '💻', sign: '⚡ Dev Team',
-    floorType: 5, startCol: 0, endCol: 5, startRow: 3, endRow: 9,
-    seats: [[1, 4], [1, 7], [3, 4]] },
-  { id: 'openspace', label: 'Open Space', emoji: '🏢', sign: '',
-    floorType: 0, startCol: 6, endCol: 14, startRow: 3, endRow: 9,
-    seats: [[7, 4], [7, 7], [10, 4], [10, 7], [13, 4], [13, 7]] },
-  { id: 'biz', label: 'Business', emoji: '📈', sign: '📊 Business',
-    floorType: 6, startCol: 15, endCol: 20, startRow: 3, endRow: 9,
-    seats: [[16, 4], [16, 7], [18, 4], [18, 7]] },
-  { id: 'qa', label: 'QA Lab', emoji: '🔍', sign: '🔍 QA Lab',
-    floorType: 7, startCol: 0, endCol: 5, startRow: 10, endRow: 13,
-    seats: [[1, 11], [3, 11]] },
-  { id: 'meeting', label: 'Meeting Room', emoji: '🏢', sign: '',
-    floorType: 3, startCol: 15, endCol: 20, startRow: 10, endRow: 13, seats: [] },
-  { id: 'lounge', label: 'Lounge', emoji: '☕', sign: '☕ Lounge',
-    floorType: 2, startCol: 0, endCol: 14, startRow: 14, endRow: 19,
-    seats: [], loungeSeats: [[2, 15], [2, 17], [5, 15], [5, 17], [8, 15], [8, 17], [11, 15], [11, 17]] },
-  { id: 'manager', label: 'Manager', emoji: '🐻', sign: '',
-    floorType: 8, startCol: 15, endCol: 20, startRow: 14, endRow: 19,
-    seats: [[17, 16]] },
-]
-
-const ROOM_MAP = new Map<RoomId, Room>(ROOMS.map(r => [r.id, r]))
 
 function getRoomAt(col: number, row: number): Room | undefined {
   for (const r of ROOMS) {
@@ -433,10 +632,18 @@ function getTargetTileForAgent(agentId: string, state: AgentState): { pos: [numb
   return { pos: claimed, room: roomId }
 }
 
-function computeGridSize(_agentCount: number) {
-  // Fixed layout — rooms don't resize
-  MAP_COLS = 21
-  MAP_ROWS = 20
+const MAX_AGENTS = 50
+
+function computeGridSize(agentCount: number) {
+  if (agentCount > MAX_AGENTS) {
+    console.warn(`[Office] Maximum capacity reached! ${agentCount} agents (max ${MAX_AGENTS})`)
+  }
+  const size = getOfficeSize(Math.min(agentCount, MAX_AGENTS))
+  if (size !== currentOfficeSize) {
+    console.log(`[Office] Scaling: ${currentOfficeSize} → ${size} (${agentCount} agents)`)
+  }
+  const builder = LAYOUT_BUILDERS[size]
+  applyLayout(builder())
 }
 
 // ── Responsive breakpoints ──
@@ -786,72 +993,99 @@ function generateRoomWalls(): WallSegment[] {
   return segs
 }
 
-const ROOM_WALLS = generateRoomWalls()
+let ROOM_WALLS = generateRoomWalls()
 
 // Per-room furniture placement
 interface FurniturePlacement { asset: string; col: number; row: number; scale?: number }
 
-// Furniture placement: cubicles/desks are 1 row NORTH of agent seat
-// so the agent faces SOUTH (toward camera) with desk behind them
-const ROOM_FURNITURE: Record<RoomId, FurniturePlacement[]> = {
-  reception: [
-    { asset: 'reception_desk', col: 10, row: 1 },
-    { asset: 'plant_large', col: 2, row: 1 },
-    { asset: 'plant_large', col: 18, row: 1 },
-    { asset: 'water_cooler', col: 14, row: 1 },
-  ],
-  dev: [
-    // Seats: [1,4],[1,7],[3,4] → desks 1 row north
-    { asset: 'cubicle_work', col: 1, row: 3 },
-    { asset: 'cubicle_work', col: 1, row: 6 },
-    { asset: 'cubicle_work', col: 3, row: 3 },
-    { asset: 'server_rack', col: 4, row: 8 },
-    { asset: 'plant_small', col: 5, row: 3 },
-  ],
-  openspace: [
-    // Seats: [7,4],[7,7],[10,4],[10,7],[13,4],[13,7] → desks 1 row north
-    { asset: 'cubicle_work', col: 7, row: 3 },
-    { asset: 'cubicle_work', col: 7, row: 6 },
-    { asset: 'cubicle_work', col: 10, row: 3 },
-    { asset: 'cubicle_work', col: 10, row: 6 },
-    { asset: 'cubicle_work', col: 13, row: 3 },
-    { asset: 'cubicle_work', col: 13, row: 6 },
-    { asset: 'printer', col: 14, row: 8 },
-    { asset: 'water_cooler', col: 6, row: 8 },
-    { asset: 'plant_large', col: 14, row: 3 },
-  ],
-  biz: [
-    // Seats: [16,4],[16,7],[18,4],[18,7] → desks 1 row north
-    { asset: 'cubicle_work', col: 16, row: 3 },
-    { asset: 'cubicle_work', col: 16, row: 6 },
-    { asset: 'cubicle_work', col: 18, row: 3 },
-    { asset: 'cubicle_work', col: 18, row: 6 },
-    { asset: 'bookshelf', col: 20, row: 4 },
-    { asset: 'plant_small', col: 20, row: 8 },
-  ],
-  qa: [
-    // Seats: [1,11],[3,11] → desks 1 row north
-    { asset: 'cubicle_work', col: 1, row: 10 },
-    { asset: 'cubicle_work', col: 3, row: 10 },
-    { asset: 'printer', col: 4, row: 12 },
-  ],
-  meeting: [
-    { asset: 'meeting_table', col: 17, row: 11 },
-    { asset: 'plant_small', col: 20, row: 10 },
-  ],
-  lounge: [
-    // Sofas stay at same spot — agents sit ON the sofa
-    { asset: 'lounge_sofa', col: 2, row: 15 },
-    { asset: 'lounge_sofa', col: 2, row: 17 },
-    { asset: 'lounge_sofa', col: 8, row: 15 },
-    { asset: 'lounge_sofa', col: 8, row: 17 },
-    { asset: 'coffee_station', col: 5, row: 15 },
-    { asset: 'water_cooler', col: 5, row: 17 },
-    { asset: 'plant_large', col: 12, row: 14 },
-    { asset: 'plant_small', col: 0, row: 14 },
-  ],
+// Dynamic furniture — generated from room layout
+// Cubicle desks placed 1 row NORTH of seat (agent faces south/camera)
+function generateRoomFurniture(): Record<string, FurniturePlacement[]> {
+  const furn: Record<string, FurniturePlacement[]> = {}
+
+  for (const room of ROOMS) {
+    const items: FurniturePlacement[] = []
+
+    // Auto-place cubicle_work 1 row north of each seat
+    if (room.seats.length > 0 && room.id !== 'manager') {
+      for (const [col, row] of room.seats) {
+        items.push({ asset: 'cubicle_work', col, row: row - 1 })
+      }
+    }
+
+    // Room-specific extras
+    const midCol = Math.floor((room.startCol + room.endCol) / 2)
+    switch (room.id) {
+      case 'reception':
+        items.push({ asset: 'reception_desk', col: midCol, row: room.startRow + 1 })
+        items.push({ asset: 'plant_large', col: room.startCol + 2, row: room.startRow + 1 })
+        items.push({ asset: 'plant_large', col: room.endCol - 2, row: room.startRow + 1 })
+        items.push({ asset: 'water_cooler', col: midCol + 4, row: room.startRow + 1 })
+        break
+      case 'dev':
+        items.push({ asset: 'server_rack', col: room.endCol - 1, row: room.endRow - 1 })
+        items.push({ asset: 'plant_small', col: room.endCol, row: room.startRow })
+        break
+      case 'openspace':
+        items.push({ asset: 'printer', col: room.endCol - 1, row: room.endRow - 1 })
+        items.push({ asset: 'water_cooler', col: room.startCol, row: room.endRow - 1 })
+        items.push({ asset: 'plant_large', col: room.endCol - 1, row: room.startRow })
+        break
+      case 'biz':
+        items.push({ asset: 'bookshelf', col: room.endCol, row: room.startRow + 1 })
+        items.push({ asset: 'plant_small', col: room.endCol, row: room.endRow - 1 })
+        break
+      case 'qa':
+        items.push({ asset: 'printer', col: room.endCol - 1, row: room.endRow - 1 })
+        break
+      case 'meeting':
+      case 'meeting2':
+        items.push({ asset: 'meeting_table', col: midCol, row: Math.floor((room.startRow + room.endRow) / 2) })
+        items.push({ asset: 'plant_small', col: room.endCol, row: room.startRow })
+        break
+      case 'lounge': {
+        // Sofas at loungeSeats positions
+        const sofaSpots = room.loungeSeats ?? []
+        for (let i = 0; i < Math.min(sofaSpots.length, 8); i++) {
+          items.push({ asset: 'lounge_sofa', col: sofaSpots[i][0], row: sofaSpots[i][1] })
+        }
+        items.push({ asset: 'coffee_station', col: midCol, row: room.startRow + 1 })
+        items.push({ asset: 'water_cooler', col: midCol + 3, row: room.startRow + 1 })
+        items.push({ asset: 'plant_large', col: room.endCol - 1, row: room.startRow })
+        items.push({ asset: 'plant_small', col: room.startCol, row: room.startRow })
+        break
+      }
+      case 'manager':
+        for (const [col, row] of room.seats) {
+          items.push({ asset: 'manager_desk', col, row: row - 1 })
+        }
+        items.push({ asset: 'bookshelf', col: room.endCol, row: room.startRow + 1 })
+        items.push({ asset: 'plant_large', col: room.startCol, row: room.endRow - 1 })
+        break
+      case 'rnd':
+        items.push({ asset: 'server_rack', col: room.endCol - 1, row: room.endRow - 1 })
+        items.push({ asset: 'plant_small', col: room.startCol, row: room.startRow })
+        break
+      case 'training':
+        items.push({ asset: 'plant_small', col: room.endCol, row: room.startRow })
+        break
+      case 'library':
+        items.push({ asset: 'bookshelf', col: room.startCol + 1, row: room.startRow + 1 })
+        items.push({ asset: 'bookshelf', col: room.endCol - 1, row: room.startRow + 1 })
+        items.push({ asset: 'plant_small', col: midCol, row: room.startRow + 1 })
+        break
+    }
+
+    furn[room.id] = items
+  }
+  return furn
+}
+
+let ROOM_FURNITURE: Record<string, FurniturePlacement[]> = generateRoomFurniture()
+
+// Legacy compat — keep the old static structure shape (referenced below)
+const _legacyFurniture: Record<string, FurniturePlacement[]> = {
   manager: [
-    // Seat: [17,16] → desk 1 row north
     { asset: 'manager_desk', col: 17, row: 15 },
     { asset: 'bookshelf', col: 20, row: 15 },
     { asset: 'plant_large', col: 15, row: 18 },
@@ -878,8 +1112,8 @@ const UI_MISC = ['chat_bubble']
 // Room sign → sprite mapping
 const ROOM_SIGN_SPRITE: Record<RoomId, string | null> = {
   reception: 'sign_reception', dev: 'sign_dev', openspace: null,
-  biz: 'sign_biz', qa: 'sign_qa', meeting: null,
-  lounge: 'sign_lounge', manager: null,
+  biz: 'sign_biz', qa: 'sign_qa', meeting: null, meeting2: null,
+  lounge: 'sign_lounge', manager: null, rnd: null, training: null, library: null,
 }
 
 // Agent state → status icon mapping
@@ -1156,9 +1390,18 @@ function buildAgents(defs: AgentDef[]): AgentRuntime[] {
   FLOOR_MAP = generateFloorMap()
   WALLS = generateWalls()
   CUBICLE_POSITIONS = ROOMS.flatMap(r => r.seats)
+  ROOM_FURNITURE = generateRoomFurniture()
+  ROOM_WALLS = generateRoomWalls()
   loungeAssignments.clear()
+  workSeatAssignments.clear()
+  _occupiedTiles.clear()
 
-  console.log(`[Office] buildAgents: ${defs.length} agents, MAP ${MAP_COLS}x${MAP_ROWS}, rooms: ${ROOMS.map(r => r.id).join(', ')}`)
+  // Verify: total seats ≥ agent count
+  const totalSeats = ROOMS.reduce((sum, r) => sum + r.seats.length, 0)
+  if (totalSeats < defs.length) {
+    console.warn(`[Office] ⚠️ Not enough seats! ${totalSeats} seats for ${defs.length} agents`)
+  }
+  console.log(`[Office] buildAgents: ${defs.length} agents → ${currentOfficeSize} layout, ${MAP_COLS}×${MAP_ROWS}, ${ROOMS.length} rooms, ${totalSeats} seats`)
 
   return defs.map(def => {
     const { pos, room } = getTargetTileForAgent(def.id, def.state)
@@ -2966,6 +3209,13 @@ export default function App() {
             return def
           })
           // All agents come from Gateway — no hardcoded additions needed
+          if (newDefs.length > MAX_AGENTS) {
+            setNotifications(prev => [...prev.slice(-(MAX_VISIBLE_NOTIFICATIONS - 1)), {
+              id: `cap-${Date.now()}`, agentName: '⚠️ Office', agentEmoji: '🏢',
+              message: `${newDefs.length} agents detected — max capacity is ${MAX_AGENTS}. Some agents may not have seats.`,
+              timestamp: Date.now(),
+            }])
+          }
           setAgentDefs(newDefs)
           loadSpritesForAgents(newDefs)
           agentsRef.current = buildAgents(newDefs)
