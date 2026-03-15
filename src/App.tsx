@@ -781,6 +781,34 @@ const spriteCache: Record<string, HTMLImageElement> = {}
 const spriteSizes: Record<string, number> = {} // track native size for scaling
 let spritesInitialized = false
 
+// UI assets — signs, status icons, chat bubble
+const UI_BASE = '/assets/ui/v7'
+const UI_SIGNS: Record<string, string> = {
+  dev: 'signs/sign_dev.png',
+  biz: 'signs/sign_business.png',
+  qa: 'signs/sign_qa.png',
+  lounge: 'signs/sign_lounge.png',
+  reception: 'signs/sign_hq.png',
+}
+const UI_ICONS = ['status_active', 'status_idle', 'status_error', 'status_working', 'mug']
+const UI_MISC = ['chat_bubble']
+
+// Room sign → sprite mapping
+const ROOM_SIGN_SPRITE: Record<RoomId, string | null> = {
+  reception: 'sign_reception', dev: 'sign_dev', openspace: null,
+  biz: 'sign_biz', qa: 'sign_qa', meeting: null,
+  lounge: 'sign_lounge', manager: null,
+}
+
+// Agent state → status icon mapping
+const STATE_ICON_MAP: Record<AgentState, string | null> = {
+  active: 'icon_status_active',
+  working: 'icon_status_working',
+  idle: 'icon_status_idle',
+  error: 'icon_status_error',
+  offline: null,
+}
+
 function preloadSprites() {
   if (spritesInitialized) return
   spritesInitialized = true
@@ -793,7 +821,7 @@ function preloadSprites() {
     spriteSizes[name] = 64
   }
 
-  // Load v4 fallbacks (128×128) — only for assets not in v6
+  // Load v4 fallbacks (128×128)
   for (const name of V4_FALLBACK) {
     if (!spriteCache[name]) {
       const img = new Image()
@@ -803,7 +831,33 @@ function preloadSprites() {
     }
   }
 
-  console.log(`[Assets] Preloading ${V6_ASSETS.length} v6 + ${V4_FALLBACK.length} v4 sprites`)
+  // Load UI signs
+  for (const [roomId, path] of Object.entries(UI_SIGNS)) {
+    const key = `sign_${roomId}`
+    const img = new Image()
+    img.src = `${UI_BASE}/${path}`
+    spriteCache[key] = img
+    spriteSizes[key] = roomId === 'reception' ? 128 : 64 // HQ sign is 128×32
+  }
+
+  // Load UI icons
+  for (const name of UI_ICONS) {
+    const key = `icon_${name}`
+    const img = new Image()
+    img.src = `${UI_BASE}/icons/${name}.png`
+    spriteCache[key] = img
+    spriteSizes[key] = 16
+  }
+
+  // Load chat bubble
+  for (const name of UI_MISC) {
+    const img = new Image()
+    img.src = `${UI_BASE}/${name}.png`
+    spriteCache[name] = img
+    spriteSizes[name] = 32
+  }
+
+  console.log(`[Assets] Preloading ${V6_ASSETS.length} v6 + ${V4_FALLBACK.length} v4 + ${Object.keys(UI_SIGNS).length + UI_ICONS.length + UI_MISC.length} UI sprites`)
 }
 
 function getSprite(name: string): HTMLImageElement | null {
@@ -1768,6 +1822,35 @@ function drawAgent(
   ctx.fillStyle = STATE_META[agent.def.state].color
   ctx.fill()
 
+  // ── Status icon sprite above head ──
+  const stateIconKey = STATE_ICON_MAP[agent.def.state]
+  if (stateIconKey) {
+    const iconSprite = getSprite(stateIconKey)
+    if (iconSprite) {
+      const iconSize = 16
+      const iconX = Math.round(sx - iconSize / 2)
+      const iconY = Math.round(sy - SPRITE_DISPLAY - iconSize + 4 + breathOffset + sitOffset)
+      // Pulsing effect for idle/error
+      const pulse = (agent.def.state === 'idle' || agent.def.state === 'error')
+        ? 0.7 + 0.3 * Math.sin(t * 4) : 1
+      ctx.globalAlpha = (isOffline ? 0.4 : 1) * pulse
+      ctx.imageSmoothingEnabled = false
+      ctx.drawImage(iconSprite, iconX, iconY, iconSize, iconSize)
+      ctx.imageSmoothingEnabled = true
+      ctx.globalAlpha = isOffline ? 0.4 : 1
+    }
+  }
+
+  // Coffee mug for idle agents in lounge
+  if (agent.def.state === 'idle' && agent.room === 'lounge') {
+    const mugSprite = getSprite('icon_mug')
+    if (mugSprite) {
+      ctx.imageSmoothingEnabled = false
+      ctx.drawImage(mugSprite, Math.round(sx + 12), Math.round(sy - 20 + sitOffset), 12, 12)
+      ctx.imageSmoothingEnabled = true
+    }
+  }
+
   // ── Task label — speech bubble above every agent showing current task ──
   if (agent.def.task) {
     const taskText = shortTask(agent.def.task)
@@ -1971,15 +2054,32 @@ function drawScene(
   const labels: I18nLabels = i18nLabels ?? { loungeZone: '☕ Lounge', workZone: '💻 Work Zone', errorZone: '🐛 Errors', virtualOffice: '🏢 Virtual Office', active: 'Active', working: 'Working', idle: 'Idle', offline: 'Offline', error: 'Error', editMode: 'Edit Mode' }
   ctx.fillText(labels.virtualOffice, w / 2, 28)
 
-  // Room signs — draw sign at each room's top-center
-  ctx.font = `${f.zone}px "Heebo", "Segoe UI", sans-serif`
-  ctx.fillStyle = 'rgba(255,255,255,0.3)'
+  // Room signs — sprite signs if available, text fallback
   for (const room of ROOMS) {
     if (!room.sign) continue
     const signCol = (room.startCol + room.endCol) / 2
     const signRow = room.startRow
-    const [sx, sy] = toIso(signCol, signRow)
-    ctx.fillText(room.sign, ox + sx, oy + sy - 6)
+    const [signIx, signIy] = toIso(signCol, signRow)
+    const signX = ox + signIx
+    const signY = oy + signIy
+
+    const signKey = ROOM_SIGN_SPRITE[room.id]
+    const signSprite = signKey ? getSprite(signKey) : null
+
+    if (signSprite) {
+      // Sprite sign — draw above the room's top wall
+      const signW = room.id === 'reception' ? 96 : 48  // HQ sign wider
+      const signH = room.id === 'reception' ? 24 : 24
+      ctx.imageSmoothingEnabled = false
+      ctx.drawImage(signSprite, Math.round(signX - signW / 2), Math.round(signY - signH - 8), signW, signH)
+      ctx.imageSmoothingEnabled = true
+    } else {
+      // Text fallback
+      ctx.font = `${f.zone}px "Heebo", "Segoe UI", sans-serif`
+      ctx.fillStyle = 'rgba(255,255,255,0.3)'
+      ctx.textAlign = 'center'
+      ctx.fillText(room.sign, signX, signY - 6)
+    }
   }
 
   // --- Floor tilemap --- (use FLOOR_MAP dimensions, not MAP_ROWS/COLS, to avoid stale mismatch)
