@@ -5,10 +5,11 @@ type AgentState = 'active' | 'idle' | 'working' | 'offline' | 'error'
 
 interface ChatMessage {
   id: string
-  role: 'user' | 'assistant'
+  role: 'user' | 'assistant' | 'agent'
   text: string
   ts: number
   source?: string // channel source: 'discord', 'telegram', 'webchat', etc.
+  senderName?: string // for inter-agent messages
 }
 
 // Filter out internal/system messages that shouldn't appear in chat UI
@@ -2827,14 +2828,27 @@ export default function App() {
 
     return history
       .filter((m: any) => m.role === 'user' || m.role === 'assistant')
-      .map((m: any, i: number) => ({
-        id: m.id || `hist-${i}-${m.timestamp || i}`,
-        role: m.role as 'user' | 'assistant',
-        text: (m.text || m.content || m.preview || '').substring(0, 2000),
-        ts: m.timestamp ? new Date(m.timestamp).getTime() : Date.now() - (history.length - i) * 1000,
-        source: m.channel || m.source || undefined,
-      }))
-      .filter((m: ChatMessage) => m.text.length > 0)
+      .map((m: any, i: number) => {
+        const text = (m.text || m.content || m.preview || '').substring(0, 2000)
+        // Detect inter-agent messages (from sessions_send)
+        const interAgentMatch = text.match(/^\[Inter-session message\] sourceSession=agent:([^:\s]+)/)
+        const isInterAgent = interAgentMatch || text.startsWith('[Inter-session')
+        const senderName = interAgentMatch?.[1] || undefined
+        // Clean inter-agent prefix from displayed text
+        const cleanText = isInterAgent
+          ? text.replace(/^\[Inter-session message\][^\n]*\n?/, '').trim()
+          : text
+        return {
+          id: m.id || `hist-${i}-${m.timestamp || i}`,
+          role: (isInterAgent ? 'agent' : m.role) as 'user' | 'assistant' | 'agent',
+          text: cleanText,
+          ts: m.timestamp ? new Date(m.timestamp).getTime() : Date.now() - (history.length - i) * 1000,
+          source: m.channel || m.source || undefined,
+          senderName,
+        }
+      })
+      .filter((m: ChatMessage) => m.text.length > 0 && !isVisibleMessage(m) === false)
+      .filter(isVisibleMessage)
   }, [gatewayToken, gatewayUrl, getBackendBase])
 
   const selectedAgent = agentDefs.find(a => a.id === selectedId) ?? null
@@ -3500,7 +3514,14 @@ function ChatInput({ agentId, agentColor, compact, onSend, onFetchHistory }: {
         if (history.length > 0) {
           if (lastTs) {
             const existingIds = new Set(current.map(m => m.id))
-            const newMsgs = history.filter(m => !existingIds.has(m.id) && m.ts > lastTs)
+            const existingTexts = new Set(current.map(m => `${m.role}:${m.text.substring(0, 100)}`))
+            const newMsgs = history.filter(m => {
+              if (existingIds.has(m.id)) return false
+              // Deduplicate by role+text (user messages added locally before poll returns them)
+              const textKey = `${m.role}:${m.text.substring(0, 100)}`
+              if (m.role === 'user' && existingTexts.has(textKey)) return false
+              return m.ts > lastTs
+            })
             if (newMsgs.length > 0) {
               const merged = [...current, ...newMsgs]
               globalChatCache[agentId] = merged
@@ -3565,31 +3586,48 @@ function ChatInput({ agentId, agentColor, compact, onSend, onFetchHistory }: {
             💬 שלח הודעה להתחיל שיחה
           </div>
         )}
-        {messages.map(msg => (
+        {messages.map(msg => {
+          const isAgent = msg.role === 'agent'
+          const isUser = msg.role === 'user'
+          const align = isUser ? 'flex-start' : isAgent ? 'center' : 'flex-end'
+          const bgColor = isUser ? 'rgba(60, 60, 120, 0.5)'
+            : isAgent ? 'rgba(255, 165, 0, 0.15)' // orange tint for inter-agent
+            : 'rgba(255,255,255,0.06)'
+          const borderColor = isUser ? '1px solid rgba(80,80,150,0.3)'
+            : isAgent ? '1px solid rgba(255, 165, 0, 0.3)'
+            : `1px solid ${agentColor}33`
+          const borderRadius = isUser ? '12px 12px 4px 12px'
+            : isAgent ? '8px' : '12px 12px 12px 4px'
+          return (
           <div key={msg.id} style={{
-            alignSelf: msg.role === 'user' ? 'flex-start' : 'flex-end',
-            maxWidth: '80%',
+            alignSelf: align,
+            maxWidth: isAgent ? '90%' : '80%',
           }}>
+            {isAgent && msg.senderName && (
+              <div style={{ fontSize: 10, color: '#f0a030', marginBottom: 2, textAlign: 'center' }}>
+                🤖 {msg.senderName}
+              </div>
+            )}
             <div style={{
               padding: '8px 12px',
-              borderRadius: msg.role === 'user' ? '12px 12px 4px 12px' : '12px 12px 12px 4px',
-              background: msg.role === 'user' ? 'rgba(60, 60, 120, 0.5)' : 'rgba(255,255,255,0.06)',
-              border: msg.role === 'assistant' ? `1px solid ${agentColor}33` : '1px solid rgba(80,80,150,0.3)',
+              borderRadius,
+              background: bgColor,
+              border: borderColor,
               color: '#e0e0e0', fontSize: 13, lineHeight: 1.6, wordBreak: 'break-word',
             }}>
               {renderMarkdown(msg.text)}
             </div>
             <div style={{
               fontSize: 10, color: '#666', marginTop: 2,
-              textAlign: msg.role === 'user' ? 'left' : 'right',
+              textAlign: isUser ? 'left' : 'right',
               padding: '0 4px', display: 'flex', gap: 3,
-              justifyContent: msg.role === 'user' ? 'flex-start' : 'flex-end',
+              justifyContent: isUser ? 'flex-start' : 'flex-end',
             }}>
               {msg.ts ? formatTime(msg.ts) : ''}
-              {msg.role === 'user' && msg.id.startsWith('local-') && ' ✓✓'}
+              {isUser && msg.id.startsWith('local-') && ' ✓✓'}
             </div>
           </div>
-        ))}
+        )})}
         {/* Streaming message — token by token */}
         {streamText && (
           <div style={{ alignSelf: 'flex-end', maxWidth: '80%' }}>
