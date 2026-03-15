@@ -1,0 +1,20 @@
+[Unit]
+Description=Virtual Office — Backend + Frontend
+After=network.target
+Wants=network.target
+
+[Service]
+Type=simple
+User=tal
+WorkingDirectory=/home/tal/projects/virtual-office-poc/server
+Environment=NODE_ENV=production
+Environment=PORT=3001
+Environment=GATEWAY_URL=http://127.0.0.1:18789
+Environment=GATEWAY_TOKEN=689f7e21b95f21b17992b22e7e0f3a62e6e061b665b8187b
+Environment=STATIC_DIR=/home/tal/projects/virtual-office-poc/dist
+ExecStart=/usr/bin/node dist/index.js
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
