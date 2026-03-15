@@ -3484,6 +3484,10 @@ function ChatInput({ agentId, agentColor, compact, onSend, onFetchHistory }: {
 }) {
   const [text, setText] = useState('')
   const [status, setStatus] = useState<SendStatus>('idle')
+  const [isRecording, setIsRecording] = useState(false)
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null)
+  const audioChunksRef = useRef<Blob[]>([])
+  const fileInputRef = useRef<HTMLInputElement>(null)
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [polling, setPolling] = useState(false)
   const [streamText, setStreamText] = useState('')
@@ -3634,9 +3638,65 @@ function ChatInput({ agentId, agentColor, compact, onSend, onFetchHistory }: {
     }
   }, [text, status, agentId, onSend])
 
-  const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
+    const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSend() }
   }, [handleSend])
+
+  // Voice recording
+  const handleMicToggle = useCallback(async () => {
+    if (isRecording) {
+      // Stop recording
+      mediaRecorderRef.current?.stop()
+      setIsRecording(false)
+      return
+    }
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+      const recorder = new MediaRecorder(stream, { mimeType: 'audio/webm;codecs=opus' })
+      audioChunksRef.current = []
+      recorder.ondataavailable = (e) => { if (e.data.size > 0) audioChunksRef.current.push(e.data) }
+      recorder.onstop = async () => {
+        stream.getTracks().forEach(t => t.stop())
+        const blob = new Blob(audioChunksRef.current, { type: 'audio/webm' })
+        if (blob.size < 100) return
+        // Transcribe
+        setStatus('sending')
+        try {
+          const backendBase = window.location.port === '5173' ? 'http://localhost:3001' : ''
+          const form = new FormData()
+          form.append('audio', blob, 'recording.webm')
+          const res = await fetch(`${backendBase}/api/transcribe`, { method: 'POST', body: form })
+          const data = await res.json()
+          if (data.ok && data.text) {
+            setText(prev => prev ? `${prev} ${data.text}` : data.text)
+          }
+        } catch (err) { console.error('Transcription failed:', err) }
+        setStatus('idle')
+      }
+      recorder.start()
+      mediaRecorderRef.current = recorder
+      setIsRecording(true)
+    } catch (err) { console.error('Mic access denied:', err) }
+  }, [isRecording])
+
+  // File attachment
+  const handleFileSelect = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+    // For images, convert to base64 and send as text with markdown image
+    if (file.type.startsWith('image/')) {
+      const reader = new FileReader()
+      reader.onload = () => {
+        const dataUrl = reader.result as string
+        const attachText = `📎 [${file.name}]\n![${file.name}](${dataUrl})`
+        setText(prev => prev ? `${prev}\n${attachText}` : attachText)
+      }
+      reader.readAsDataURL(file)
+    } else {
+      setText(prev => prev ? `${prev}\n📎 ${file.name}` : `📎 ${file.name}`)
+    }
+    e.target.value = '' // reset
+  }, [])
 
   return (
     <div style={{
@@ -3762,6 +3822,35 @@ function ChatInput({ agentId, agentColor, compact, onSend, onFetchHistory }: {
             el.style.height = Math.min(el.scrollHeight, 100) + 'px'
           }}
         />
+        {/* Attachment button */}
+        <input type="file" ref={fileInputRef} onChange={handleFileSelect} style={{ display: 'none' }}
+          accept="image/*,video/*,.pdf,.doc,.docx,.txt" />
+        <button
+          onClick={() => fileInputRef.current?.click()}
+          style={{
+            width: 36, height: 36, borderRadius: 8, border: 'none',
+            background: 'rgba(255,255,255,0.06)', color: '#888',
+            fontSize: 18, cursor: 'pointer', flexShrink: 0,
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            transition: 'background 0.2s',
+          }}
+          title="צרף קובץ"
+        >📎</button>
+        {/* Mic button */}
+        <button
+          onClick={handleMicToggle}
+          style={{
+            width: 36, height: 36, borderRadius: 8, border: 'none',
+            background: isRecording ? '#ef4444' : 'rgba(255,255,255,0.06)',
+            color: isRecording ? '#fff' : '#888',
+            fontSize: 18, cursor: 'pointer', flexShrink: 0,
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            transition: 'background 0.3s',
+            animation: isRecording ? 'chatBlink 1s ease-in-out infinite' : 'none',
+          }}
+          title={isRecording ? 'עצור הקלטה' : 'הקלט קול'}
+        >{isRecording ? '⏹' : '🎤'}</button>
+        {/* Send button */}
         <button
           onClick={handleSend}
           disabled={!text.trim() || status === 'sending'}
