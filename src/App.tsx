@@ -409,7 +409,7 @@ function buildLayout_XXL(): OfficeLayout {
         seats: generateSeats(8, 31, 5, 1) },
       { id: 'qa', label: 'QA Lab', emoji: '🔍', sign: '🔍 QA Lab',
         floorType: 7, startCol: 0, endCol: 7, startRow: 16, endRow: 19,
-        seats: generateSeats(4, 1, 17, 2) },
+        seats: generateSeats(4, 2, 17, 2) },  // col offset 2 to avoid dev seat collision
       { id: 'meeting', label: 'Meeting Room', emoji: '🏢', sign: '',
         floorType: 3, startCol: 18, endCol: 23, startRow: 16, endRow: 19, seats: [] },
       { id: 'meeting2', label: 'Meeting 2', emoji: '🏢', sign: '',
