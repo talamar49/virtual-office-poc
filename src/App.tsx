@@ -1,4 +1,69 @@
-import { useRef, useEffect, useState, useCallback } from 'react'
+import { useRef, useEffect, useState, useCallback, createContext, useContext } from 'react'
+
+// ── i18n ──
+type Lang = 'he' | 'en'
+const translations = {
+  he: {
+    virtualOffice: 'משרד וירטואלי',
+    loading: 'המשרד נטען...',
+    connectingAgents: 'מחבר סוכנים...',
+    setup: 'הגדרות חיבור',
+    gatewayToken: 'Gateway Token',
+    gatewayUrl: 'כתובת Gateway',
+    tokenPlaceholder: 'הזן את ה-Gateway Token שלך',
+    connect: 'התחבר',
+    demoMode: 'סביבת דמו',
+    sendMessage: 'שלח הודעה להתחיל שיחה',
+    send: 'שלח',
+    typeMessage: 'הקלד הודעה...',
+    active: 'פעיל',
+    working: 'עובד',
+    idle: 'ממתין',
+    offline: 'לא מחובר',
+    error: 'שגיאה',
+    workZone: '💻 אזור עבודה',
+    loungeZone: '☕ אזור מנוחה',
+    errorZone: '🐛 שגיאות',
+    currentTask: 'משימה נוכחית',
+    language: 'שפה',
+  },
+  en: {
+    virtualOffice: 'Virtual Office',
+    loading: 'Loading office...',
+    connectingAgents: 'Connecting agents...',
+    setup: 'Connection Setup',
+    gatewayToken: 'Gateway Token',
+    gatewayUrl: 'Gateway URL',
+    tokenPlaceholder: 'Enter your Gateway Token',
+    connect: 'Connect',
+    demoMode: 'Demo Mode',
+    sendMessage: 'Send a message to start a conversation',
+    send: 'Send',
+    typeMessage: 'Type a message...',
+    active: 'Active',
+    working: 'Working',
+    idle: 'Idle',
+    offline: 'Offline',
+    error: 'Error',
+    workZone: '💻 Work Zone',
+    loungeZone: '☕ Lounge',
+    errorZone: '🐛 Errors',
+    currentTask: 'Current Task',
+    language: 'Language',
+  },
+} as const
+
+function useI18n() {
+  const [lang, setLang] = useState<Lang>(() => (localStorage.getItem('office-lang') as Lang) || 'he')
+  const t = translations[lang]
+  const toggleLang = useCallback(() => {
+    const next = lang === 'he' ? 'en' : 'he'
+    localStorage.setItem('office-lang', next)
+    setLang(next)
+  }, [lang])
+  const dir = lang === 'he' ? 'rtl' : 'ltr'
+  return { lang, t, toggleLang, dir }
+}
 
 // ── Types ──
 type AgentState = 'active' | 'idle' | 'working' | 'offline' | 'error'
@@ -1761,9 +1826,13 @@ function hitTestAgent(
 
 // ── Settings / Onboarding Screen ──
 
-function SettingsScreen({ onConnect, onDemo }: {
+function SettingsScreen({ onConnect, onDemo, t, dir, toggleLang, lang }: {
   onConnect: (token: string, url: string) => void
   onDemo: () => void
+  t: typeof translations[Lang]
+  dir: string
+  toggleLang: () => void
+  lang: Lang
 }) {
   const [token, setToken] = useState(localStorage.getItem('gateway-token') || '')
   const [url, setUrl] = useState(localStorage.getItem('gateway-url') || 'http://127.0.0.1:18789')
@@ -1775,16 +1844,15 @@ function SettingsScreen({ onConnect, onDemo }: {
   }
 
   const inputStyle: React.CSSProperties = {
-    width: '100%', padding: '10px 12px', borderRadius: 0,
-    border: '2px solid #3a3a5c', background: '#16162b', color: '#eee',
-    fontSize: 9, outline: 'none', boxSizing: 'border-box', direction: 'ltr',
-    fontFamily: '"Press Start 2P", cursive',
-    boxShadow: 'inset -2px -2px 0 #0a0a1a, inset 2px 2px 0 #2a2a4a',
+    width: '100%', padding: '12px 14px', borderRadius: 8,
+    border: '1px solid #3a3a5c', background: '#1e1e38', color: '#eee',
+    fontSize: 15, outline: 'none', boxSizing: 'border-box', direction: 'ltr',
+    fontFamily: '"Heebo", "Segoe UI", sans-serif',
   }
 
   const labelStyle: React.CSSProperties = {
-    fontSize: 8, color: '#7a7aaa', marginBottom: 6, display: 'block', direction: 'rtl',
-    fontFamily: '"Press Start 2P", cursive',
+    fontSize: 14, color: '#9a9aca', marginBottom: 6, display: 'block', direction: 'rtl',
+    fontFamily: '"Heebo", "Segoe UI", sans-serif', fontWeight: 500,
   }
 
   return (
@@ -1793,34 +1861,39 @@ function SettingsScreen({ onConnect, onDemo }: {
       display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 100,
     }}>
       <div style={{
-        background: '#16162b', borderRadius: 0, padding: 32, width: 380, maxWidth: '90vw',
-        border: '2px solid #3a3a5c',
-        boxShadow: 'inset -2px -2px 0 #0a0a1a, inset 2px 2px 0 #2a2a4a, 0 8px 40px rgba(0,0,0,0.6)',
-        fontFamily: '"Press Start 2P", cursive',
+        position: 'relative', background: '#1a1a30', borderRadius: 16, padding: 36, width: 400, maxWidth: '90vw',
+        border: '1px solid #3a3a5c',
+        boxShadow: '0 8px 40px rgba(0,0,0,0.5)',
+        fontFamily: '"Heebo", "Segoe UI", sans-serif',
       }}>
         <h1 style={{
-          fontSize: 12, color: '#e0e0e0', textAlign: 'center', margin: '0 0 8px',
-          fontWeight: 600, fontFamily: '"Press Start 2P", cursive',
+          fontSize: 24, color: '#e0e0e0', textAlign: 'center', margin: '0 0 8px',
+          fontWeight: 700, fontFamily: '"Heebo", "Segoe UI", sans-serif',
         }}>
-          🏢 Virtual Office — Setup
+          🏢 {t.virtualOffice}
         </h1>
-        <p style={{ fontSize: 7, color: '#7a7aaa', textAlign: 'center', margin: '0 0 24px' }}>
-          הגדר את החיבור ל-Gateway
+        <p style={{ fontSize: 14, color: '#7a7aaa', textAlign: 'center', margin: '0 0 28px' }}>
+          {t.setup}
         </p>
+        <button onClick={toggleLang} style={{
+          position: 'absolute', top: 12, right: 12, background: 'rgba(255,255,255,0.08)',
+          border: '1px solid #3a3a5c', borderRadius: 8, padding: '4px 10px',
+          color: '#9a9aca', fontSize: 12, cursor: 'pointer', fontFamily: '"Heebo", sans-serif',
+        }}>{lang === 'he' ? 'EN' : 'עב'}</button>
 
         <div style={{ marginBottom: 16 }}>
-          <label style={labelStyle}>Gateway Token</label>
+          <label style={labelStyle}>{t.gatewayToken}</label>
           <input
             type="password"
             value={token}
             onChange={e => setToken(e.target.value)}
-            placeholder="הזן את ה-Gateway Token שלך"
+            placeholder={t.tokenPlaceholder}
             style={inputStyle}
           />
         </div>
 
         <div style={{ marginBottom: 24 }}>
-          <label style={labelStyle}>Gateway URL</label>
+          <label style={labelStyle}>{t.gatewayUrl}</label>
           <input
             type="text"
             value={url}
@@ -1834,12 +1907,12 @@ function SettingsScreen({ onConnect, onDemo }: {
           onClick={handleConnect}
           disabled={!token.trim()}
           style={{
-            width: '100%', padding: '12px 0', borderRadius: 0,
+            width: '100%', padding: '14px 0', borderRadius: 10,
             background: token.trim() ? '#4a6aff' : '#333', color: '#fff',
-            border: '2px solid #3a3a5c', fontSize: 10, fontWeight: 600, cursor: token.trim() ? 'pointer' : 'default',
+            border: 'none', fontSize: 16, fontWeight: 600, cursor: token.trim() ? 'pointer' : 'default',
             marginBottom: 12, opacity: token.trim() ? 1 : 0.5,
-            fontFamily: '"Press Start 2P", cursive',
-            boxShadow: 'inset -2px -2px 0 #0a0a1a, inset 2px 2px 0 #6a8aff',
+            fontFamily: '"Heebo", "Segoe UI", sans-serif',
+            transition: 'background 0.2s',
           }}
         >
           התחבר
@@ -1850,8 +1923,8 @@ function SettingsScreen({ onConnect, onDemo }: {
             onClick={onDemo}
             style={{
               background: 'none', border: 'none', color: '#7a7aff',
-              fontSize: 8, cursor: 'pointer', textDecoration: 'underline',
-              fontFamily: '"Press Start 2P", cursive',
+              fontSize: 13, cursor: 'pointer', textDecoration: 'underline',
+              fontFamily: '"Heebo", "Segoe UI", sans-serif',
             }}
           >
             סביבת דמו
@@ -2011,6 +2084,7 @@ const NOTIFICATION_DURATION_MS = 5_000
 
 // ── React App ──
 export default function App() {
+  const { lang, t, toggleLang, dir } = useI18n()
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const [hoverAgentId, _setHoverAgentId] = useState<string | null>(null)
   const hoverAgentIdRef = useRef<string | null>(null)
@@ -2174,7 +2248,7 @@ export default function App() {
             'X-Gateway-Token': gatewayToken,
             'X-Gateway-URL': gatewayUrl,
           },
-          body: JSON.stringify({ activeMinutes: 10080, messageLimit: 3 }), // 7 days — load ALL agents
+          body: JSON.stringify({ activeMinutes: 10080, messageLimit: 1 }), // 7 days — load ALL agents, minimal messages for speed
         })
         if (!res.ok) return
         const data = await res.json()
@@ -2855,7 +2929,7 @@ export default function App() {
 
     // Show settings screen
   if (showSettings) {
-    return <SettingsScreen onConnect={handleConnect} onDemo={handleDemo} />
+    return <SettingsScreen onConnect={handleConnect} onDemo={handleDemo} t={t} dir={dir} toggleLang={toggleLang} lang={lang} />
   }
 
   return (
@@ -2893,21 +2967,20 @@ export default function App() {
         <div style={{
           position: 'absolute', inset: 0, zIndex: 50,
           background: '#1a1a2e', display: 'flex', flexDirection: 'column',
-          alignItems: 'center', justifyContent: 'center', gap: 16,
-          fontFamily: '"Press Start 2P", cursive',
+          alignItems: 'center', justifyContent: 'center', gap: 20,
+          fontFamily: '"Heebo", "Segoe UI", sans-serif',
         }}>
-          <div style={{ fontSize: 48 }}>🏢</div>
-          <div style={{ color: '#7a7aaa', fontSize: 10 }}>טוען משרד...</div>
+          <div style={{ fontSize: 56 }}>🏢</div>
+          <div style={{ color: '#c0c0e0', fontSize: 18, fontWeight: 600 }}>{t.loading}</div>
           <div style={{
-            width: 120, height: 8, background: '#2a2a4a', borderRadius: 0, overflow: 'hidden',
-            border: '2px solid #3a3a5c',
+            width: 200, height: 6, background: '#2a2a4a', borderRadius: 3, overflow: 'hidden',
           }}>
             <div style={{
-              width: '100%', height: '100%', background: '#4a6aff', borderRadius: 0,
-              animation: 'loading 2s steps(8) infinite',
+              width: '100%', height: '100%', background: 'linear-gradient(90deg, #4a6aff, #7a9aff)',
+              borderRadius: 3, animation: 'loading 1.5s ease-in-out infinite',
             }} />
           </div>
-          <div style={{ color: '#4a6aff', fontSize: 8, animation: 'pixelBlink 1s steps(1) infinite' }}>▓▓▓</div>
+          <div style={{ color: '#7a7aaa', fontSize: 13 }}>{t.connectingAgents}</div>
         </div>
       )}
       <canvas
