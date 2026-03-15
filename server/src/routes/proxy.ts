@@ -339,9 +339,9 @@ proxyRouter.post('/send', async (req: Request, res: Response) => {
   if (agentId) {
     const keyMatch = sessionKey.match(/^agent:([^:]+)/);
     const keyAgentId = keyMatch ? keyMatch[1] : null;
-    // Normalize aliases: "main" ↔ "yogi"
-    const normalizedKey = keyAgentId === 'main' ? 'yogi' : keyAgentId;
-    const normalizedTarget = agentId === 'main' ? 'yogi' : agentId;
+    // Compare agent IDs (no hardcoded aliases)
+    const normalizedKey = keyAgentId;
+    const normalizedTarget = agentId;
 
     if (normalizedKey !== normalizedTarget) {
       console.warn(`[Proxy] Routing mismatch! agentId="${agentId}" but sessionKey belongs to "${keyAgentId}". Blocking.`);

@@ -1,7 +1,8 @@
 /**
- * Agent Registry — v2 with zone assignments
+ * Agent Registry — fully dynamic
  * 
- * 12 agents matching the virtual-office-v2.md spec.
+ * Agents are discovered from the Gateway at runtime.
+ * No hardcoded agent data — works with any OpenClaw setup.
  */
 
 export type Zone = 'work' | 'lounge' | 'bugzone';
@@ -14,49 +15,47 @@ export interface AgentMeta {
   hasSprite: boolean;
 }
 
-const AGENTS: AgentMeta[] = [
-  { id: 'yogi',   name: 'יוגי',  role: 'COO',                              emoji: '🐻',  hasSprite: true },
-  { id: 'omer',   name: 'עומר',  role: 'Tech Lead',                        emoji: '👨‍💻',  hasSprite: true },
-  { id: 'noa',    name: 'נועה',  role: 'Frontend/UX',                      emoji: '🎨',  hasSprite: true },
-  { id: 'itai',   name: 'איתי',  role: 'Backend/API',                      emoji: '🗄️',  hasSprite: true },
-  { id: 'gil',    name: 'גיל',   role: 'DevOps',                           emoji: '⚙️',  hasSprite: true },
-  { id: 'michal', name: 'מיכל',  role: 'QA Lead',                          emoji: '🔍',  hasSprite: true },
-  { id: 'amir',   name: 'אמיר',  role: 'Game Artist',                      emoji: '🎮',  hasSprite: true },
-  { id: 'roni',   name: 'רוני',  role: 'Product Manager',                  emoji: '📋',  hasSprite: false },
-  { id: 'dana',   name: 'דנה',   role: 'HR',                               emoji: '💜',  hasSprite: false },
-  { id: 'lior',   name: 'ליאור', role: 'Marketing',                        emoji: '📈',  hasSprite: false },
-  { id: 'tomer',  name: 'תומר',  role: 'Sales',                            emoji: '💼',  hasSprite: false },
-  { id: 'alon',   name: 'אלון',  role: 'Senior Dev',                       emoji: '🧑‍💻',  hasSprite: false },
-];
+// Dynamic registry — populated from Gateway sessions
+const dynamicAgents = new Map<string, AgentMeta>();
 
-export const AGENT_REGISTRY = new Map<string, AgentMeta>(
-  AGENTS.map((a) => [a.id, a])
-);
+const DEFAULT_EMOJIS = ['🤖', '👨‍💻', '👩‍💻', '🧑‍💻', '🎨', '🔧', '📊', '🔍', '📋', '💡', '🎯', '⚡', '🌟', '🔮', '🎪', '🦊'];
+
+export const AGENT_REGISTRY = dynamicAgents;
+
+export function registerAgent(id: string, meta?: Partial<AgentMeta>): AgentMeta {
+  const existing = dynamicAgents.get(id);
+  if (existing) return existing;
+  
+  const index = dynamicAgents.size;
+  const agent: AgentMeta = {
+    id,
+    name: meta?.name ?? id,
+    role: meta?.role ?? 'Agent',
+    emoji: meta?.emoji ?? DEFAULT_EMOJIS[index % DEFAULT_EMOJIS.length],
+    hasSprite: meta?.hasSprite ?? false,
+  };
+  dynamicAgents.set(id, agent);
+  return agent;
+}
 
 export function getAgentMeta(id: string): AgentMeta {
-  return AGENT_REGISTRY.get(id) ?? {
-    id,
-    name: id,
-    role: 'Unknown',
-    emoji: '❓',
-    hasSprite: false,
-  };
+  return dynamicAgents.get(id) ?? registerAgent(id);
 }
 
 export function getAllAgentIds(): string[] {
-  return AGENTS.map((a) => a.id);
+  return Array.from(dynamicAgents.keys());
 }
 
 /**
  * Map agent ID to OpenClaw session key prefix.
- * The Gateway uses "main" as the agent ID for Yogi (the main agent).
+ * The Gateway uses "main" as the primary agent ID.
  */
 export function toGatewayAgentId(agentId: string): string {
-  return agentId === 'yogi' ? 'main' : agentId;
+  return agentId;
 }
 
 export function fromGatewayAgentId(gatewayId: string): string {
-  return gatewayId === 'main' ? 'yogi' : gatewayId;
+  return gatewayId;
 }
 
-export default AGENTS;
+export default [];

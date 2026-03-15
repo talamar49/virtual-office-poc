@@ -56,9 +56,9 @@ let MAP_ROWS = BASE_MAP_ROWS
  * Work zone starts at col 4, so effective cubicle cols = (MAP_COLS - 5) / 2
  */
 // Layout constants — lounge on left, work on right
-const LOUNGE_COLS = 5        // cols 0-4 for lounge
-const WORK_START_COL = 6     // work zone starts at col 6 (smaller gap)
-const WORK_COLS_PER_AGENT = 3 // compact cubicles
+let LOUNGE_COLS = 11         // dynamic — updated in computeGridSize
+let WORK_START_COL = 12      // dynamic — updated in computeGridSize
+const WORK_COLS_PER_AGENT = 4 // enough space between cubicles
 const WORK_ROWS_PER_AGENT = 4
 // Force at least 3 rows for visual balance
 function getWorkAgentsPerRow(agentCount: number): number {
@@ -68,23 +68,27 @@ function getWorkAgentsPerRow(agentCount: number): number {
   return 5                          // 17+ → 5 per row
 }
 let WORK_AGENTS_PER_ROW = 3
-const LOUNGE_ROWS_PER_AGENT = 3
+const LOUNGE_ROWS_PER_AGENT = 4
 
 function computeGridSize(agentCount: number) {
   // Update dynamic agents-per-row based on count
   WORK_AGENTS_PER_ROW = getWorkAgentsPerRow(agentCount)
 
-  // Work zone: size for ~80% of agents (worst realistic case, not 100%)
-  const maxWorkAgents = Math.ceil(agentCount * 0.8)
-  const workRows = Math.ceil(maxWorkAgents / WORK_AGENTS_PER_ROW)
+  // Work zone: cubicle for EVERY agent
+  const workRows = Math.ceil(agentCount / WORK_AGENTS_PER_ROW)
   const workHeight = workRows * WORK_ROWS_PER_AGENT + 3
 
-  // Lounge: 2 per row, ~50% idle max
-  const maxLoungeAgents = Math.ceil(agentCount * 0.5)
-  const loungeRows = Math.ceil(maxLoungeAgents / 2)
+  // Lounge: 3 columns (0, 4, 8), ALL agents could be idle
+  const LOUNGE_COLS_COUNT = 3
+  const loungeColSpacing = WORK_COLS_PER_AGENT // same spacing as work zone
+  const loungeRows = Math.ceil(agentCount / LOUNGE_COLS_COUNT)
   const loungeHeight = loungeRows * LOUNGE_ROWS_PER_AGENT + 3
 
-  MAP_ROWS = Math.min(20, Math.max(BASE_MAP_ROWS, workHeight, loungeHeight))
+  // Lounge width = columns * spacing + margin
+  LOUNGE_COLS = LOUNGE_COLS_COUNT * loungeColSpacing + 1
+  WORK_START_COL = LOUNGE_COLS + 1
+
+  MAP_ROWS = Math.max(BASE_MAP_ROWS, workHeight, loungeHeight)
   MAP_COLS = Math.max(BASE_MAP_COLS, WORK_START_COL + WORK_AGENTS_PER_ROW * WORK_COLS_PER_AGENT + 2)
 }
 
@@ -195,12 +199,12 @@ function generateFloorMap(): number[][] {
 let FLOOR_MAP = generateFloorMap()
 
 // Floor tile colors (2 shades each for checkerboard pattern)
-// Unified cool palette — subtle variation between zones
+// Distinct colors per zone — easy to see where each zone is
 const FLOOR_STYLES: Record<number, [string, string]> = {
-  0: ['#1e2a3a', '#222e3e'],  // work zone — dark blue-gray
-  1: ['#1a2636', '#1e2a3a'],  // stone — slightly darker
-  2: ['#1e2a3a', '#243040'],  // lounge — same family, tiny bit lighter
-  3: ['#2a2040', '#2e2444'],  // bug zone — subtle purple tint (not red!)
+  0: ['#2a1f14', '#332618'],  // work zone — warm wood
+  1: ['#1a3040', '#1e3848'],  // stone — cool blue-gray
+  2: ['#3a2820', '#422e24'],  // lounge — carpet brown
+  3: ['#3a1a1a', '#421e1e'],  // bug zone — dark red
 }
 
 // Wall tiles — positions along edges
@@ -434,21 +438,14 @@ function getDecoImage(type: string): HTMLImageElement | null {
 }
 
 // ── Known agent visuals (backward compatible with our team's sprites) ──
-const KNOWN_AGENTS: Record<string, { name: string; role: string; emoji: string; color: string; frames: number }> = {
-  main:   { name: 'יוגי',   role: 'COO',              emoji: '🐻', color: '#8B4513', frames: 6 },
-  yogi:   { name: 'יוגי',   role: 'COO',              emoji: '🐻', color: '#8B4513', frames: 8 },
-  omer:   { name: 'עומר',   role: 'Tech Lead',        emoji: '👨‍💻', color: '#2196F3', frames: 8 },
-  noa:    { name: 'נועה',   role: 'Frontend/UX',      emoji: '🎨', color: '#E91E63', frames: 8 },
-  itai:   { name: 'איתי',   role: 'Backend/API',      emoji: '🗄️', color: '#4CAF50', frames: 6 },
-  gil:    { name: 'גיל',    role: 'DevOps',           emoji: '⚙️', color: '#FF9800', frames: 6 },
-  michal: { name: 'מיכל',   role: 'QA Lead',          emoji: '🔍', color: '#009688', frames: 6 },
-  amir:   { name: 'אמיר',   role: 'Game Artist',      emoji: '🎮', color: '#FF5722', frames: 6 },
-  roni:   { name: 'רוני',   role: 'Product Manager',  emoji: '📋', color: '#9C27B0', frames: 6 },
-  dana:   { name: 'דנה',    role: 'HR',               emoji: '💜', color: '#E040FB', frames: 6 },
-  lior:   { name: 'ליאור',  role: 'Marketing',        emoji: '📈', color: '#00BCD4', frames: 6 },
-  tomer:  { name: 'תומר',   role: 'Sales',            emoji: '💼', color: '#795548', frames: 6 },
-  alon:   { name: 'אלון',   role: 'Senior Dev',       emoji: '🧑‍💻', color: '#607D8B', frames: 6 },
-}
+// Dynamic agent registry — populated from Gateway sessions, NOT hardcoded
+const KNOWN_AGENTS: Record<string, { name: string; role: string; emoji: string; color: string; frames: number; fixedIndex: number }> = {}
+
+// Dynamic list of all agent IDs — populated from Gateway sessions
+const ALL_AGENT_IDS: string[] = []
+
+// Fallback emojis for dynamically discovered agents
+const AGENT_EMOJIS = ['🤖', '👨‍💻', '👩‍💻', '🧑‍💻', '🎨', '🔧', '📊', '🔍', '📋', '💡', '🎯', '⚡', '🌟', '🔮', '🎪', '🦊']
 
 // Fallback colors for unknown agents (cycled)
 const FALLBACK_COLORS = [
@@ -496,6 +493,19 @@ function extractTaskFromSession(session: any, state?: string): { text: string; i
 function agentDefFromSession(sessionKey: string, index: number, updatedAt: number, aborted: boolean, lastMsg?: string): AgentDef {
   const match = sessionKey.match(/^agent:([^:]+)/)
   const id = match ? match[1] : sessionKey
+  
+  // Dynamically register agent if not yet known
+  if (!KNOWN_AGENTS[id]) {
+    KNOWN_AGENTS[id] = {
+      name: id,
+      role: 'Agent',
+      emoji: AGENT_EMOJIS[Object.keys(KNOWN_AGENTS).length % AGENT_EMOJIS.length],
+      color: FALLBACK_COLORS[Object.keys(KNOWN_AGENTS).length % FALLBACK_COLORS.length],
+      frames: 6,
+      fixedIndex: Object.keys(KNOWN_AGENTS).length,
+    }
+    if (!ALL_AGENT_IDS.includes(id)) ALL_AGENT_IDS.push(id)
+  }
   const known = KNOWN_AGENTS[id]
 
   // Determine state from updatedAt
@@ -525,21 +535,8 @@ function agentDefFromSession(sessionKey: string, index: number, updatedAt: numbe
 
 // ── Default demo agents (used when no Gateway token) ──
 const _now = Date.now()
-const DEFAULT_AGENT_DEFS: AgentDef[] = [
-  { id: 'yogi',   ...KNOWN_AGENTS.yogi,   state: 'active',  task: 'מנהל את הצוות', cubicleIndex: 0,  lastUpdated: _now - 15_000 },
-  { id: 'omer',   ...KNOWN_AGENTS.omer,   state: 'working', task: 'בונה Virtual Office', cubicleIndex: 1,  lastUpdated: _now - 5_000 },
-  { id: 'noa',    ...KNOWN_AGENTS.noa,    state: 'working', task: 'עיצוב isometric layout', cubicleIndex: 2,  lastUpdated: _now - 20_000 },
-  { id: 'itai',   ...KNOWN_AGENTS.itai,   state: 'idle',    task: 'backend architecture', cubicleIndex: 3,  lastUpdated: _now - 180_000 },
-  { id: 'gil',    ...KNOWN_AGENTS.gil,    state: 'offline', task: 'dev setup plan', cubicleIndex: 4,  lastUpdated: _now - 3_600_000 },
-  { id: 'michal', ...KNOWN_AGENTS.michal, state: 'working', task: 'בדיקות QA', cubicleIndex: 5,  lastUpdated: _now - 10_000 },
-  { id: 'amir',   ...KNOWN_AGENTS.amir,   state: 'working', task: 'יצירת sprites', cubicleIndex: 6,  lastUpdated: _now - 8_000 },
-  { id: 'roni',   ...KNOWN_AGENTS.roni,   state: 'idle',    task: 'ניהול roadmap', cubicleIndex: 7,  lastUpdated: _now - 240_000 },
-  { id: 'dana',   ...KNOWN_AGENTS.dana,   state: 'idle',    task: 'משאבי אנוש', cubicleIndex: 8,  lastUpdated: _now - 300_000 },
-  { id: 'lior',   ...KNOWN_AGENTS.lior,   state: 'idle',    task: 'שיווק ותוכן', cubicleIndex: 9,  lastUpdated: _now - 600_000 },
-  { id: 'tomer',  ...KNOWN_AGENTS.tomer,  state: 'error',   task: 'מכירות CRM', cubicleIndex: 10, lastUpdated: _now - 45_000 },
-  { id: 'alon',   ...KNOWN_AGENTS.alon,   state: 'working', task: 'full-stack dev', cubicleIndex: 11, lastUpdated: _now - 12_000 },
-]
-
+// No hardcoded agents — demo mode shows empty office until Gateway connects
+const DEFAULT_AGENT_DEFS: AgentDef[] = []
 const STATE_META: Record<AgentState, { color: string; label: string; dot: string }> = {
   active:  { color: '#4CAF50', label: 'פעיל',      dot: '🟢' },
   working: { color: '#2196F3', label: 'עובד',      dot: '🔵' },
@@ -559,7 +556,9 @@ function getZoneForState(state: AgentState): Zone {
 // Lounge spots — single column, 3 rows apart for clear separation
 function generateLoungeSpots(count: number): [number, number][] {
   const spots: [number, number][] = []
-  const cols = [1, 3, 5] // 3 columns across lounge zone
+  // Dynamic columns matching work zone spacing
+  const colSpacing = WORK_COLS_PER_AGENT
+  const cols = [0, colSpacing, colSpacing * 2]
   const rowsNeeded = Math.ceil(count / cols.length)
   for (let r = 0; r < rowsNeeded; r++) {
     for (const c of cols) {
@@ -597,11 +596,14 @@ const loungeAssignments: Map<string, number> = new Map()
 const bugAssignments: Map<string, number> = new Map()
 
 function assignSpot(agentId: string, spots: [number, number][], assignments: Map<string, number>): [number, number] {
-  // If agent already has a spot, keep it
-  const existing = assignments.get(agentId)
-  if (existing !== undefined) return spots[existing]
+  // Known agents ALWAYS go to their fixed index — no exceptions
+  const known = KNOWN_AGENTS[agentId]
+  if (known && known.fixedIndex < spots.length) {
+    assignments.set(agentId, known.fixedIndex)
+    return spots[known.fixedIndex]
+  }
 
-  // Find first unoccupied spot
+  // Unknown agents: find first unoccupied spot
   const taken = new Set(assignments.values())
   for (let i = 0; i < spots.length; i++) {
     if (!taken.has(i)) {
@@ -609,11 +611,12 @@ function assignSpot(agentId: string, spots: [number, number][], assignments: Map
       return spots[i]
     }
   }
-  // All spots taken — offset slightly from last spot
-  const fallbackIdx = assignments.size % spots.length
-  assignments.set(agentId, fallbackIdx)
-  const [bx, by] = spots[fallbackIdx]
-  return [bx + 0.5, by + 0.5]
+  // Overflow — offset to prevent overlap
+  const overflowIdx = assignments.size
+  const baseIdx = overflowIdx % spots.length
+  assignments.set(agentId, spots.length + overflowIdx)
+  const [bx, by] = spots[baseIdx]
+  return [bx + 1.5, by + 1.5]
 }
 
 function getTargetTile(agent: AgentDef): [number, number] {
@@ -642,8 +645,8 @@ function buildAgents(defs: AgentDef[]): AgentRuntime[] {
   WALLS = generateWalls()
   BUG_WORKSTATIONS = generateBugWorkstations()
   BUG_SPOTS = generateBugSpots()
-  // Generate enough cubicles for realistic max working count (not all agents)
-  const maxWorkCount = Math.ceil(defs.length * 0.8)
+  // Generate cubicles for ALL agents — each agent has a fixed desk
+  const maxWorkCount = defs.length
   CUBICLE_POSITIONS = generateCubiclePositions(maxWorkCount)
   // Regenerate lounge spots — enough for ALL agents
   LOUNGE_SPOTS = generateLoungeSpots(defs.length)
@@ -1460,7 +1463,7 @@ function drawScene(
   ctx.fillStyle = '#7a7aaa'
   ctx.font = `bold ${f.title}px "Heebo", "Segoe UI", sans-serif`
   ctx.textAlign = 'center'
-  ctx.fillText('🏢 Tal Amar — Virtual Office', w / 2, 28)
+  ctx.fillText('🏢 Virtual Office', w / 2, 28)
 
   // Zone labels — positioned relative to dynamic grid
   ctx.font = `${f.zone}px "Heebo", "Segoe UI", sans-serif`
@@ -1520,7 +1523,56 @@ function drawScene(
   drawables.push({ sortY: MAP_COLS - 4 + MAP_ROWS - 3, draw: () => drawCoffeeTable(ctx, ox, oy, MAP_COLS - 4, MAP_ROWS - 3) })
   drawables.push({ sortY: MAP_COLS - 3 + MAP_ROWS - 2, draw: () => drawCoffeeMachine(ctx, ox, oy, MAP_COLS - 3, MAP_ROWS - 2) })
 
-  // (desks, monitors, bug workstations removed per Tal's request)
+  // Draw name labels at each agent's FIXED work + lounge spot
+  const allDefs = allAgentDefs ?? []
+  for (let defIdx = 0; defIdx < allDefs.length; defIdx++) {
+    const def = allDefs[defIdx]
+    const known = KNOWN_AGENTS[def.id]
+    const idx = known?.fixedIndex ?? defIdx
+
+    // Work spot label (cubicle) — small tag below the tile
+    if (idx < CUBICLE_POSITIONS.length) {
+      const [wc, wr] = CUBICLE_POSITIONS[idx]
+      const [wix, wiy] = toIso(wc, wr)
+      const wsx = ox + wix
+      const wsy = oy + wiy
+      const isHere = getZoneForState(def.state) === 'work'
+      drawables.push({ sortY: wc + wr - 0.2, draw: () => {
+        // Background pill for readability
+        ctx.font = '9px "Heebo", "Segoe UI", sans-serif'
+        ctx.textAlign = 'center'
+        const label = def.name
+        const tw = ctx.measureText(label).width + 12
+        ctx.fillStyle = isHere ? 'rgba(0,230,118,0.15)' : 'rgba(0,0,0,0.3)'
+        ctx.beginPath()
+        ctx.roundRect(wsx - tw / 2, wsy + 22, tw, 16, 4)
+        ctx.fill()
+        ctx.fillStyle = isHere ? 'rgba(255,255,255,0.7)' : 'rgba(255,255,255,0.25)'
+        ctx.fillText(label, wsx, wsy + 34)
+      }})
+    }
+
+    // Lounge spot label — small tag below the tile
+    if (idx < LOUNGE_SPOTS.length) {
+      const [lc, lr] = LOUNGE_SPOTS[idx]
+      const [lix, liy] = toIso(lc, lr)
+      const lsx = ox + lix
+      const lsy = oy + liy
+      const isHere = getZoneForState(def.state) === 'lounge'
+      drawables.push({ sortY: lc + lr - 0.2, draw: () => {
+        ctx.font = '9px "Heebo", "Segoe UI", sans-serif'
+        ctx.textAlign = 'center'
+        const label = def.name
+        const tw = ctx.measureText(label).width + 12
+        ctx.fillStyle = isHere ? 'rgba(58,40,32,0.5)' : 'rgba(0,0,0,0.3)'
+        ctx.beginPath()
+        ctx.roundRect(lsx - tw / 2, lsy + 22, tw, 16, 4)
+        ctx.fill()
+        ctx.fillStyle = isHere ? 'rgba(255,255,255,0.7)' : 'rgba(255,255,255,0.25)'
+        ctx.fillText(label, lsx, lsy + 34)
+      }})
+    }
+  }
 
   // Decorations (Amir's assets)
   for (const deco of decos) {
@@ -2011,7 +2063,7 @@ export default function App() {
             'X-Gateway-Token': gatewayToken,
             'X-Gateway-URL': gatewayUrl,
           },
-          body: JSON.stringify({ activeMinutes: 120, messageLimit: 3 }),
+          body: JSON.stringify({ activeMinutes: 10080, messageLimit: 3 }), // 7 days — load ALL agents
         })
         if (!res.ok) return
         const data = await res.json()
@@ -2043,17 +2095,20 @@ export default function App() {
 
         const sessionEntries: [string, any][] = Array.from(agentSessions.entries())
 
-        // First poll: discover agents and rebuild
+        // First poll: discover agents and rebuild — include ALL known agents
         if (!discoveredRef.current && sessionEntries.length > 0) {
           discoveredRef.current = true
+          const discoveredIds = new Set(sessionEntries.map(([id]) => id))
           const newDefs: AgentDef[] = sessionEntries.map(([id, s], i) => {
             const updatedAt = new Date(s.updatedAt).getTime()
             const { text: taskText } = extractTaskFromSession(s)
-            const def = agentDefFromSession(s.key, i, updatedAt, !!s.abortedLastRun, taskText)
+            const known = KNOWN_AGENTS[id]
+            const def = agentDefFromSession(s.key, known?.fixedIndex ?? i, updatedAt, !!s.abortedLastRun, taskText)
             def.model = s.model ?? undefined
             def.tokenUsage = s.totalTokens ?? undefined
             return def
           })
+          // All agents come from Gateway — no hardcoded additions needed
           setAgentDefs(newDefs)
           loadSpritesForAgents(newDefs)
           agentsRef.current = buildAgents(newDefs)
@@ -3504,7 +3559,7 @@ function ChatInput({ agentId, agentColor, compact, onSend, onFetchHistory }: {
         >
           {status === 'sending' ? (
             <span style={{ display: 'inline-block', width: 16, height: 16, border: '2px solid rgba(255,255,255,0.3)', borderTopColor: '#fff', borderRadius: '50%', animation: 'chatSpin 0.6s linear infinite' }} />
-          ) : '➤'}
+          ) : '◀'}
         </button>
       </div>
     </div>
