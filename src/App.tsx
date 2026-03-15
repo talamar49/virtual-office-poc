@@ -158,16 +158,15 @@ function isVisibleMessage(msg: ChatMessage): boolean {
 
 function deduplicateMessages(msgs: ChatMessage[]): ChatMessage[] {
   const seen = new Set<string>()
+  const seenTexts = new Set<string>()
   return msgs.filter(m => {
     // Deduplicate by ID
     if (seen.has(m.id)) return false
     seen.add(m.id)
-    // Also deduplicate by exact text+role within 5s window
-    const key = `${m.role}:${m.text}`
-    const duplicate = msgs.some(other =>
-      other !== m && other.role === m.role && other.text === m.text &&
-      Math.abs(other.ts - m.ts) < 5000 && seen.has(other.id) === false
-    )
+    // Deduplicate by role+text (truncated) — catches WS vs poll duplicates with different IDs
+    const textKey = `${m.role}:${m.text.substring(0, 150)}`
+    if (seenTexts.has(textKey)) return false
+    seenTexts.add(textKey)
     return true
   })
 }
@@ -3103,7 +3102,7 @@ export default function App() {
           senderName,
         }
       })
-      .filter((m: ChatMessage) => m.text.length > 0 && !isVisibleMessage(m) === false)
+      .filter((m: ChatMessage) => m.text.length > 0)
       .filter(isVisibleMessage)
   }, [gatewayToken, gatewayUrl, getBackendBase])
 
@@ -3710,8 +3709,9 @@ function ChatInput({ agentId, agentColor, compact, onSend, onFetchHistory, t }: 
     if (onFetchHistory) {
       onFetchHistory(agentId).then(history => {
         if (history.length > 0) {
-          globalChatCache[agentId] = history
-          setMessages(history)
+          const deduped = deduplicateMessages(history)
+          globalChatCache[agentId] = deduped
+          setMessages(deduped)
         }
       }).catch(() => {})
     }
@@ -3804,7 +3804,7 @@ function ChatInput({ agentId, agentColor, compact, onSend, onFetchHistory, t }: 
               return m.ts > lastTs
             })
             if (newMsgs.length > 0) {
-              const merged = [...current, ...newMsgs]
+              const merged = deduplicateMessages([...current, ...newMsgs])
               globalChatCache[agentId] = merged
               setMessages(merged)
               if (newMsgs[newMsgs.length - 1]?.role === 'assistant') {
@@ -3813,8 +3813,9 @@ function ChatInput({ agentId, agentColor, compact, onSend, onFetchHistory, t }: 
               }
             }
           } else {
-            globalChatCache[agentId] = history
-            setMessages(history)
+            const deduped = deduplicateMessages(history)
+            globalChatCache[agentId] = deduped
+            setMessages(deduped)
             if (history[history.length - 1]?.role === 'assistant') {
               setPolling(false)
               setStreamText('')
