@@ -26,6 +26,16 @@ const translations = {
     errorZone: '🐛 שגיאות',
     currentTask: 'משימה נוכחית',
     language: 'שפה',
+    attachFile: 'צרף קובץ',
+    recordVoice: 'הקלט קול',
+    stopRecording: 'עצור הקלטה',
+    chatWith: 'שיחה עם',
+    agents: 'סוכנים',
+    settings: 'הגדרות',
+    noAgents: 'אין סוכנים מחוברים',
+    reception: 'קבלה',
+    coffeeCorner: 'פינת קפה',
+    meetingRoom: 'חדר ישיבות',
   },
   en: {
     virtualOffice: 'Virtual Office',
@@ -50,6 +60,16 @@ const translations = {
     errorZone: '🐛 Errors',
     currentTask: 'Current Task',
     language: 'Language',
+    attachFile: 'Attach file',
+    recordVoice: 'Record voice',
+    stopRecording: 'Stop recording',
+    chatWith: 'Chat with',
+    agents: 'Agents',
+    settings: 'Settings',
+    noAgents: 'No agents connected',
+    reception: 'Reception',
+    coffeeCorner: 'Coffee Corner',
+    meetingRoom: 'Meeting Room',
   },
 } as const
 
@@ -1601,6 +1621,7 @@ function getIsoBounds() {
 
 // ── Main scene drawing ──
 
+interface I18nLabels { loungeZone: string; workZone: string; errorZone: string; virtualOffice: string }
 function drawScene(
   ctx: CanvasRenderingContext2D,
   w: number, h: number,
@@ -1614,6 +1635,7 @@ function drawScene(
   decorations?: DecorationWithId[],
   editState?: EditState,
   allAgentDefs?: AgentDef[],
+  i18nLabels?: I18nLabels,
 ) {
   const f = fonts ?? getCanvasFontSizes('desktop')
   const decos = decorations ?? DEFAULT_DECORATIONS.map(d => ({ ...d, _id: 0 }))
@@ -1633,18 +1655,19 @@ function drawScene(
   ctx.fillStyle = '#7a7aaa'
   ctx.font = `bold ${f.title}px "Heebo", "Segoe UI", sans-serif`
   ctx.textAlign = 'center'
-  ctx.fillText('🏢 Virtual Office', w / 2, 28)
+  const labels = i18nLabels ?? { loungeZone: '☕ Lounge', workZone: '💻 Work Zone', errorZone: '🐛 Errors', virtualOffice: '🏢 Virtual Office' }
+  ctx.fillText(labels.virtualOffice, w / 2, 28)
 
   // Zone labels — centered in each horizontal zone
   ctx.font = `${f.zone}px "Heebo", "Segoe UI", sans-serif`
   ctx.fillStyle = 'rgba(255,255,255,0.25)'
   const midCol = MAP_COLS / 2
   const [lx, ly] = toIso(midCol, LOUNGE_START_ROW)
-  ctx.fillText('☕ Lounge', ox + lx, oy + ly - 10)
+  ctx.fillText(labels.loungeZone, ox + lx, oy + ly - 10)
   const [wx, wy] = toIso(midCol, WORK_START_ROW)
-  ctx.fillText('💻 Work Zone', ox + wx, oy + wy - 10)
+  ctx.fillText(labels.workZone, ox + wx, oy + wy - 10)
   const [bx, by] = toIso(midCol, ERROR_START_ROW)
-  ctx.fillText('🐛 Errors', ox + bx, oy + by - 10)
+  ctx.fillText(labels.errorZone, ox + bx, oy + by - 10)
 
   // --- Floor tilemap --- (use FLOOR_MAP dimensions, not MAP_ROWS/COLS, to avoid stale mismatch)
   for (let row = 0; row < FLOOR_MAP.length; row++) {
@@ -2073,6 +2096,8 @@ const NOTIFICATION_DURATION_MS = 5_000
 // ── React App ──
 export default function App() {
   const { lang, t, toggleLang, dir } = useI18n()
+  const i18nRef = useRef(t)
+  i18nRef.current = t
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const [hoverAgentId, _setHoverAgentId] = useState<string | null>(null)
   const hoverAgentIdRef = useRef<string | null>(null)
@@ -2512,7 +2537,8 @@ export default function App() {
           ? { type: placementTypeRef.current, col: hoverTileRef.current[0], row: hoverTileRef.current[1] }
           : null,
       }
-      drawScene(offCtx, w, h, t, agents, hoverAgentIdRef.current, selectedIdRef.current, panRef.current.x, panRef.current.y, fonts, decorationsRef.current, editState, agentDefsRef.current)
+      const tr = i18nRef.current
+      drawScene(offCtx, w, h, t, agents, hoverAgentIdRef.current, selectedIdRef.current, panRef.current.x, panRef.current.y, fonts, decorationsRef.current, editState, agentDefsRef.current, { loungeZone: tr.loungeZone, workZone: tr.workZone, errorZone: tr.errorZone, virtualOffice: `🏢 ${tr.virtualOffice}` })
 
       offCtx.restore()
 
@@ -2971,6 +2997,14 @@ export default function App() {
           <div style={{ color: '#7a7aaa', fontSize: 13 }}>{t.connectingAgents}</div>
         </div>
       )}
+      {/* Language toggle — main UI */}
+      <button onClick={toggleLang} style={{
+        position: 'absolute', top: 12, left: 12, zIndex: 40,
+        background: 'rgba(26, 26, 46, 0.8)', border: '1px solid #3a3a5c',
+        borderRadius: 8, padding: '6px 12px', color: '#c0c0e0', fontSize: 13,
+        cursor: 'pointer', fontFamily: '"Heebo", sans-serif', backdropFilter: 'blur(8px)',
+        transition: 'background 0.2s',
+      }}>{lang === 'he' ? 'EN' : 'עב'}</button>
       <canvas
         ref={canvasRef}
         onClick={handleClick}
@@ -3292,6 +3326,7 @@ export default function App() {
             compact={isCompact}
             onSend={handleSendToAgent}
             onFetchHistory={handleFetchHistory}
+            t={t}
           />
         </div>
       )}
@@ -3475,12 +3510,13 @@ function formatTime(ts: number): string {
   return d.toLocaleTimeString('he-IL', { hour: '2-digit', minute: '2-digit' })
 }
 
-function ChatInput({ agentId, agentColor, compact, onSend, onFetchHistory }: {
+function ChatInput({ agentId, agentColor, compact, onSend, onFetchHistory, t }: {
   agentId: string
   agentColor: string
   compact?: boolean
   onSend?: (agentId: string, message: string) => Promise<void> | void
   onFetchHistory?: (agentId: string, after?: number) => Promise<ChatMessage[]>
+  t: typeof translations[Lang]
 }) {
   const [text, setText] = useState('')
   const [status, setStatus] = useState<SendStatus>('idle')
@@ -3713,7 +3749,7 @@ function ChatInput({ agentId, agentColor, compact, onSend, onFetchHistory }: {
       }}>
         {messages.length === 0 && !streamText && (
           <div style={{ textAlign: 'center', color: '#555', fontSize: 13, marginTop: 40 }}>
-            💬 שלח הודעה להתחיל שיחה
+            💬 {t.sendMessage}
           </div>
         )}
         {messages.map(msg => {
@@ -3801,7 +3837,7 @@ function ChatInput({ agentId, agentColor, compact, onSend, onFetchHistory }: {
           value={text}
           onChange={e => setText(e.target.value)}
           onKeyDown={handleKeyDown}
-          placeholder="הקלד הודעה..."
+          placeholder={t.typeMessage}
           disabled={status === 'sending'}
           rows={1}
           style={{
@@ -3834,7 +3870,7 @@ function ChatInput({ agentId, agentColor, compact, onSend, onFetchHistory }: {
             display: 'flex', alignItems: 'center', justifyContent: 'center',
             transition: 'background 0.2s',
           }}
-          title="צרף קובץ"
+          title={t.attachFile}
         >📎</button>
         {/* Mic button */}
         <button
@@ -3848,7 +3884,7 @@ function ChatInput({ agentId, agentColor, compact, onSend, onFetchHistory }: {
             transition: 'background 0.3s',
             animation: isRecording ? 'chatBlink 1s ease-in-out infinite' : 'none',
           }}
-          title={isRecording ? 'עצור הקלטה' : 'הקלט קול'}
+          title={isRecording ? t.stopRecording : t.recordVoice}
         >{isRecording ? '⏹' : '🎤'}</button>
         {/* Send button */}
         <button
