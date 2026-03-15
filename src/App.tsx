@@ -770,6 +770,9 @@ const walkSprites: Record<string, HTMLImageElement> = {}
 const walkFrameCounts: Record<string, number> = {}
 const walkHasSwRow: Record<string, boolean> = {} // true if sprite has 2 rows (64px height)
 
+// Cubicle sprites — personalized desk+monitor+agent combo (32×32, single frame)
+const cubicleSprites: Record<string, HTMLImageElement> = {}
+
 const SPRITE_ALIASES: Record<string, string> = { main: 'yogi' }
 
 function loadSpritesForAgents(defs: AgentDef[]) {
@@ -819,6 +822,14 @@ function loadSpritesForAgents(defs: AgentDef[]) {
       img.onerror = () => { /* silent — fallback to idle */ }
       img.src = `/assets/characters/${spriteId}-sitting-lounge.png`
       sittingSprites[loungeKey] = img
+    }
+
+    // Load cubicle sprite (personalized desk+monitor for work zone)
+    if (!cubicleSprites[agent.id]) {
+      const img = new Image()
+      img.onerror = () => { /* silent — no personalized cubicle */ }
+      img.src = `/assets/characters/cubicle_${spriteId}.png`
+      cubicleSprites[agent.id] = img
     }
 
     // Load walk sprite
@@ -1263,6 +1274,21 @@ function drawAgent(
 
   // Breathing disabled — caused sub-pixel flicker on pixel art sprites
   const breathOffset = 0
+
+  // Draw personalized cubicle backdrop when agent is at their work desk
+  const isAtDesk = agent.zone === 'work' && Math.abs(agent.x - agent.tx) < 0.5 && Math.abs(agent.y - agent.ty) < 0.5
+  const cubicleImg = cubicleSprites[agent.def.id]
+  if (isAtDesk && cubicleImg?.complete && cubicleImg.naturalWidth > 0) {
+    const cubDrawX = Math.round(sx - SPRITE_DISPLAY / 2)
+    const cubDrawY = Math.round(sy - SPRITE_DISPLAY + 8 + sitOffset)
+    ctx.imageSmoothingEnabled = false
+    ctx.drawImage(
+      cubicleImg,
+      0, 0, SPRITE_SIZE, SPRITE_SIZE,
+      cubDrawX, cubDrawY, SPRITE_DISPLAY, SPRITE_DISPLAY,
+    )
+    ctx.imageSmoothingEnabled = true
+  }
 
   // Determine pose based on zone and movement
   const isMoving = Math.abs(agent.x - agent.tx) > 0.5 || Math.abs(agent.y - agent.ty) > 0.5
