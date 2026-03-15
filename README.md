@@ -9,7 +9,7 @@ A real-time, isometric virtual office that brings your AI agent team to life. Wa
 ## ⚡ One-Line Install
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/talamar49/virtual-office-poc/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/openclaw/virtual-office/main/install.sh | bash
 ```
 
 The script will:
@@ -66,7 +66,7 @@ The token is the value of `auth.token` in the `gateway` section.
 ### 2. Clone and install
 
 ```bash
-git clone https://github.com/talamar49/virtual-office-poc.git
+git clone https://github.com/openclaw/virtual-office.git
 cd virtual-office-poc
 
 npm install

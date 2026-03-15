@@ -2,9 +2,9 @@
 set -e
 
 # OpenClaw Virtual Office — One-line installer
-# Usage: curl -fsSL https://raw.githubusercontent.com/talamar49/virtual-office-poc/main/install.sh | bash
+# Usage: curl -fsSL https://raw.githubusercontent.com/openclaw/virtual-office/main/install.sh | bash
 
-REPO_URL="https://github.com/talamar49/virtual-office-poc.git"
+REPO_URL="https://github.com/openclaw/virtual-office.git"
 INSTALL_DIR="$HOME/virtual-office"
 SERVICE_NAME="virtual-office"
 
