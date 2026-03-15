@@ -1933,8 +1933,9 @@ function hitTestAgent(
 
 // ── Settings / Onboarding Screen ──
 
-function SettingsScreen({ onConnect, t, dir, toggleLang, lang }: {
+function SettingsScreen({ onConnect, t, dir, toggleLang, lang, error }: {
   onConnect: (token: string, url: string) => void
+  error?: string | null
   t: typeof translations[Lang]
   dir: string
   toggleLang: () => void
@@ -1981,6 +1982,13 @@ function SettingsScreen({ onConnect, t, dir, toggleLang, lang }: {
         <p style={{ fontSize: 14, color: '#7a7aaa', textAlign: 'center', margin: '0 0 28px' }}>
           {t.setup}
         </p>
+        {error && (
+          <div style={{
+            background: 'rgba(244, 67, 54, 0.15)', border: '1px solid rgba(244, 67, 54, 0.4)',
+            borderRadius: 8, padding: '10px 14px', marginBottom: 16,
+            color: '#ff6b6b', fontSize: 13, textAlign: 'center',
+          }}>⚠️ {error}</div>
+        )}
         <button onClick={toggleLang} style={{
           position: 'absolute', top: 12, right: 12, background: 'rgba(255,255,255,0.08)',
           border: '1px solid #3a3a5c', borderRadius: 8, padding: '4px 10px',
@@ -2259,6 +2267,8 @@ export default function App() {
   // Loading state
   const [canvasReady, setCanvasReady] = useState(false)
   const [agentsLoaded, setAgentsLoaded] = useState(false)
+  const [connectionError, setConnectionError] = useState<string | null>(null)
+  const pollFailCountRef = useRef(0)
   // Sound state
   const [soundEnabled, setSoundEnabled] = useState(false)
   // Notification state
@@ -2351,10 +2361,30 @@ export default function App() {
           },
           body: JSON.stringify({ activeMinutes: 10080, messageLimit: 1 }), // 7 days — load ALL agents, minimal messages for speed
         })
-        if (!res.ok) return
+        if (!res.ok) {
+          pollFailCountRef.current++
+          if (res.status === 401 || res.status === 403) {
+            setConnectionError(lang === 'he' ? 'Gateway Token שגוי — בדוק את ההגדרות' : 'Invalid Gateway Token — check settings')
+            setShowSettings(true)
+            return
+          }
+          if (pollFailCountRef.current >= 3) {
+            setConnectionError(lang === 'he' ? 'לא ניתן להתחבר ל-Gateway' : 'Cannot connect to Gateway')
+            setShowSettings(true)
+          }
+          return
+        }
+        pollFailCountRef.current = 0
+        setConnectionError(null)
         const data = await res.json()
         const sessions: any[] = data.sessions ?? []
-        if (sessions.length === 0) return
+        if (sessions.length === 0) {
+          pollFailCountRef.current++
+          if (pollFailCountRef.current >= 6) { // 30s with no agents
+            setConnectionError(lang === 'he' ? 'לא נמצאו סוכנים — בדוק שה-Gateway פעיל ויש סוכנים מוגדרים' : 'No agents found — check Gateway is running and agents are configured')
+          }
+          return
+        }
 
         // Group sessions by agent, preferring listenable sessions (main/webchat)
         const agentSessions = new Map<string, any>()
@@ -2526,8 +2556,12 @@ export default function App() {
             setAgentDefs(agentRuntimes.map(a => ({ ...a.def })))
           }
         }
-      } catch {
-        // Gateway not available, keep static/demo data
+      } catch (err) {
+        pollFailCountRef.current++
+        if (pollFailCountRef.current >= 3) {
+          setConnectionError(lang === 'he' ? 'לא ניתן להתחבר ל-Gateway — בדוק את הכתובת' : 'Cannot reach Gateway — check URL')
+          setShowSettings(true)
+        }
       }
     }
 
@@ -2926,6 +2960,10 @@ export default function App() {
     setGatewayToken(token)
     setGatewayUrl(url)
     setShowSettings(false)
+    setConnectionError(null)
+    pollFailCountRef.current = 0
+    discoveredRef.current = false
+    setAgentsLoaded(false)
   }, [])
 
   
@@ -3030,7 +3068,7 @@ export default function App() {
 
     // Show settings screen
   if (showSettings) {
-    return <SettingsScreen onConnect={handleConnect} t={t} dir={dir} toggleLang={toggleLang} lang={lang} />
+    return <SettingsScreen onConnect={handleConnect} t={t} dir={dir} toggleLang={toggleLang} lang={lang} error={connectionError} />
   }
 
   return (
