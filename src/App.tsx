@@ -1826,9 +1826,8 @@ function hitTestAgent(
 
 // ── Settings / Onboarding Screen ──
 
-function SettingsScreen({ onConnect, onDemo, t, dir, toggleLang, lang }: {
+function SettingsScreen({ onConnect, t, dir, toggleLang, lang }: {
   onConnect: (token: string, url: string) => void
-  onDemo: () => void
   t: typeof translations[Lang]
   dir: string
   toggleLang: () => void
@@ -1918,18 +1917,7 @@ function SettingsScreen({ onConnect, onDemo, t, dir, toggleLang, lang }: {
           {t.connect}
         </button>
 
-        <div style={{ textAlign: 'center' }}>
-          <button
-            onClick={onDemo}
-            style={{
-              background: 'none', border: 'none', color: '#7a7aff',
-              fontSize: 13, cursor: 'pointer', textDecoration: 'underline',
-              fontFamily: '"Heebo", "Segoe UI", sans-serif',
-            }}
-          >
-            {t.demoMode}
-          </button>
-        </div>
+
       </div>
     </div>
   )
@@ -2158,6 +2146,7 @@ export default function App() {
 
   // Loading state
   const [canvasReady, setCanvasReady] = useState(false)
+  const [agentsLoaded, setAgentsLoaded] = useState(false)
   // Sound state
   const [soundEnabled, setSoundEnabled] = useState(false)
   // Notification state
@@ -2284,6 +2273,7 @@ export default function App() {
         // First poll: discover agents and rebuild — include ALL known agents
         if (!discoveredRef.current && sessionEntries.length > 0) {
           discoveredRef.current = true
+          setAgentsLoaded(true)
           const discoveredIds = new Set(sessionEntries.map(([id]) => id))
           const newDefs: AgentDef[] = sessionEntries.map(([id, s], i) => {
             const updatedAt = new Date(s.updatedAt).getTime()
@@ -2825,9 +2815,7 @@ export default function App() {
     setShowSettings(false)
   }, [])
 
-  const handleDemo = useCallback(() => {
-    setShowSettings(false)
-  }, [])
+  
 
   // Escape key handler
   useEffect(() => {
@@ -2929,7 +2917,7 @@ export default function App() {
 
     // Show settings screen
   if (showSettings) {
-    return <SettingsScreen onConnect={handleConnect} onDemo={handleDemo} t={t} dir={dir} toggleLang={toggleLang} lang={lang} />
+    return <SettingsScreen onConnect={handleConnect} t={t} dir={dir} toggleLang={toggleLang} lang={lang} />
   }
 
   return (
@@ -2963,7 +2951,7 @@ export default function App() {
         }
       `}</style>
       {/* Loading overlay */}
-      {!canvasReady && (
+      {(!canvasReady || !agentsLoaded) && !showSettings && (
         <div style={{
           position: 'absolute', inset: 0, zIndex: 50,
           background: '#1a1a2e', display: 'flex', flexDirection: 'column',
