@@ -705,7 +705,7 @@ function buildAgents(defs: AgentDef[]): AgentRuntime[] {
   BUG_SPOTS = generateBugSpots(defs.length)
   CUBICLE_POSITIONS = generateCubiclePositions(defs.length)
   LOUNGE_SPOTS = generateLoungeSpots(defs.length)
-  console.log(`[Office] buildAgents: ${defs.length} agents, MAP ${MAP_COLS}x${MAP_ROWS}, lounge=${LOUNGE_SPOTS.length} spots, work=${CUBICLE_POSITIONS.length} spots, bug=${BUG_SPOTS.length} spots`)
+  console.log(`[Office] buildAgents: ${defs.length} agents, MAP ${MAP_COLS}x${MAP_ROWS}, FLOOR ${FLOOR_MAP.length}x${FLOOR_MAP[0]?.length ?? 0}, lounge rows ${LOUNGE_START_ROW}-${LOUNGE_END_ROW} (${LOUNGE_SPOTS.length} spots), work rows ${WORK_START_ROW}-${WORK_END_ROW} (${CUBICLE_POSITIONS.length} spots), error rows ${ERROR_START_ROW}-${ERROR_END_ROW} (${BUG_SPOTS.length} spots)`)
   LOUNGE_SOFA_POSITIONS = LOUNGE_SPOTS.map(([c, r]): [number, number] => [c + 1, r - 1])
   // Reset spot assignments — fresh every rebuild
   workAssignments.clear()
@@ -1532,9 +1532,9 @@ function drawScene(
   const [bx, by] = toIso(midCol, ERROR_START_ROW)
   ctx.fillText('🐛 Errors', ox + bx, oy + by - 10)
 
-  // --- Floor tilemap ---
-  for (let row = 0; row < MAP_ROWS; row++) {
-    for (let col = 0; col < MAP_COLS; col++) {
+  // --- Floor tilemap --- (use FLOOR_MAP dimensions, not MAP_ROWS/COLS, to avoid stale mismatch)
+  for (let row = 0; row < FLOOR_MAP.length; row++) {
+    for (let col = 0; col < (FLOOR_MAP[row]?.length ?? 0); col++) {
       drawIsoTile(ctx, ox, oy, col, row, FLOOR_MAP[row][col])
     }
   }
