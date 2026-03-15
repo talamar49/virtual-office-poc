@@ -7,7 +7,10 @@
 
 import 'dotenv/config';
 import path from 'path';
+import { fileURLToPath } from 'url';
 import express from 'express';
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 import cors from 'cors';
 import { createServer } from 'http';
 import { apiRouter } from './routes/api.js';
