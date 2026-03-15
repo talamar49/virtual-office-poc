@@ -1075,68 +1075,134 @@ const walkHasSwRow: Record<string, boolean> = {} // true if sprite has 2 rows (6
 
 const SPRITE_ALIASES: Record<string, string> = { main: 'yogi' }
 
+// v7 character sprites: 64×64 per frame, separate files per pose
+// Shadow sprites: {id}-shadow.png (40×12 ellipse)
+const shadowSprites: Record<string, HTMLImageElement> = {}
+// Track which agents use v7 (64×64) vs legacy (32×32) sprites
+const spriteIsV7: Set<string> = new Set()
+
+/** Get sprite frame size for an agent (v7=64, legacy=32) */
+function getCharSpriteSize(agentId: string): number {
+  return spriteIsV7.has(agentId) ? 64 : SPRITE_SIZE
+}
+
 function loadSpritesForAgents(defs: AgentDef[]) {
   loadGenericSprites()
   defs.forEach(agent => {
     const spriteId = SPRITE_ALIASES[agent.id] ?? agent.id
 
-    // Load idle sprite
+    // Load idle sprite — try v7 first, then legacy
     if (!spriteImages[agent.id] && !spriteFailed.has(agent.id)) {
       const img = new Image()
-      img.onerror = () => { spriteFailed.add(agent.id); delete spriteImages[agent.id] }
+      img.onerror = () => {
+        // v7 failed — try legacy path
+        const legacyImg = new Image()
+        legacyImg.onerror = () => { spriteFailed.add(agent.id) }
+        legacyImg.onload = () => {
+          if (legacyImg.naturalWidth > 0) {
+            spriteImages[agent.id] = legacyImg
+            spriteResolved[agent.id] = legacyImg
+            spriteFrameCounts[agent.id] = Math.max(1, Math.floor(legacyImg.naturalWidth / SPRITE_SIZE))
+          }
+        }
+        legacyImg.src = `/assets/characters/${spriteId}-idle.png`
+      }
       img.onload = () => {
         if (img.naturalWidth > 0) {
+          spriteIsV7.add(agent.id)
           spriteResolved[agent.id] = img
-          spriteFrameCounts[agent.id] = Math.max(1, Math.floor(img.naturalWidth / SPRITE_SIZE))
+          spriteFrameCounts[agent.id] = Math.max(1, Math.floor(img.naturalWidth / 64))
         } else {
           spriteFailed.add(agent.id)
         }
       }
-      img.src = `/assets/characters/${spriteId}-idle.png`
+      img.src = `/assets/characters/v7/${spriteId}-idle.png`
       spriteImages[agent.id] = img
     }
 
-    // Load sitting-work sprite
+    // Load sitting-work sprite — v7 then legacy
     const workKey = `${agent.id}-work`
     if (!sittingSprites[workKey]) {
       const img = new Image()
       img.onload = () => {
         if (img.naturalWidth > 0) {
-          sittingFrameCounts[workKey] = Math.max(1, Math.floor(img.naturalWidth / SPRITE_SIZE))
+          const sz = spriteIsV7.has(agent.id) ? 64 : SPRITE_SIZE
+          sittingFrameCounts[workKey] = Math.max(1, Math.floor(img.naturalWidth / sz))
         }
       }
-      img.onerror = () => { /* silent — fallback to idle */ }
-      img.src = `/assets/characters/${spriteId}-sitting-work.png`
+      img.onerror = () => {
+        // Try legacy
+        const legacyImg = new Image()
+        legacyImg.onload = () => {
+          if (legacyImg.naturalWidth > 0) {
+            sittingSprites[workKey] = legacyImg
+            sittingFrameCounts[workKey] = Math.max(1, Math.floor(legacyImg.naturalWidth / SPRITE_SIZE))
+          }
+        }
+        legacyImg.onerror = () => {}
+        legacyImg.src = `/assets/characters/${spriteId}-sitting-work.png`
+      }
+      img.src = `/assets/characters/v7/${spriteId}-sitting-work.png`
       sittingSprites[workKey] = img
     }
 
-    // Load sitting-lounge sprite
+    // Load sitting-lounge sprite — v7 then legacy
     const loungeKey = `${agent.id}-lounge`
     if (!sittingSprites[loungeKey]) {
       const img = new Image()
       img.onload = () => {
         if (img.naturalWidth > 0) {
-          sittingFrameCounts[loungeKey] = Math.max(1, Math.floor(img.naturalWidth / SPRITE_SIZE))
+          const sz = spriteIsV7.has(agent.id) ? 64 : SPRITE_SIZE
+          sittingFrameCounts[loungeKey] = Math.max(1, Math.floor(img.naturalWidth / sz))
         }
       }
-      img.onerror = () => { /* silent — fallback to idle */ }
-      img.src = `/assets/characters/${spriteId}-sitting-lounge.png`
+      img.onerror = () => {
+        const legacyImg = new Image()
+        legacyImg.onload = () => {
+          if (legacyImg.naturalWidth > 0) {
+            sittingSprites[loungeKey] = legacyImg
+            sittingFrameCounts[loungeKey] = Math.max(1, Math.floor(legacyImg.naturalWidth / SPRITE_SIZE))
+          }
+        }
+        legacyImg.onerror = () => {}
+        legacyImg.src = `/assets/characters/${spriteId}-sitting-lounge.png`
+      }
+      img.src = `/assets/characters/v7/${spriteId}-sitting-lounge.png`
       sittingSprites[loungeKey] = img
     }
 
-    // Load cubicle sprite (personalized desk+monitor for work zone)
-        // Load walk sprite
+    // Load walk sprite — v7 then legacy
     if (!walkSprites[agent.id]) {
       const img = new Image()
       img.onload = () => {
         if (img.naturalWidth > 0) {
-          walkFrameCounts[agent.id] = Math.max(1, Math.floor(img.naturalWidth / SPRITE_SIZE))
-          walkHasSwRow[agent.id] = img.naturalHeight >= SPRITE_SIZE * 2
+          const sz = spriteIsV7.has(agent.id) ? 64 : SPRITE_SIZE
+          walkFrameCounts[agent.id] = Math.max(1, Math.floor(img.naturalWidth / sz))
+          walkHasSwRow[agent.id] = img.naturalHeight >= sz * 2
         }
       }
-      img.onerror = () => { /* silent — fallback to idle */ }
-      img.src = `/assets/characters/${spriteId}-walk.png`
+      img.onerror = () => {
+        const legacyImg = new Image()
+        legacyImg.onload = () => {
+          if (legacyImg.naturalWidth > 0) {
+            walkSprites[agent.id] = legacyImg
+            walkFrameCounts[agent.id] = Math.max(1, Math.floor(legacyImg.naturalWidth / SPRITE_SIZE))
+            walkHasSwRow[agent.id] = legacyImg.naturalHeight >= SPRITE_SIZE * 2
+          }
+        }
+        legacyImg.onerror = () => {}
+        legacyImg.src = `/assets/characters/${spriteId}-walk.png`
+      }
+      img.src = `/assets/characters/v7/${spriteId}-walk.png`
       walkSprites[agent.id] = img
+    }
+
+    // Load shadow sprite (v7 only)
+    if (!shadowSprites[agent.id]) {
+      const img = new Image()
+      img.onerror = () => {} // no shadow is fine
+      img.src = `/assets/characters/v7/${spriteId}-shadow.png`
+      shadowSprites[agent.id] = img
     }
   })
 }
@@ -1571,11 +1637,18 @@ function drawAgent(
     ctx.stroke()
   }
 
-  // Shadow
-  ctx.beginPath()
-  ctx.ellipse(sx, sy + 4, 14, 6, 0, 0, Math.PI * 2)
-  ctx.fillStyle = 'rgba(0,0,0,0.3)'
-  ctx.fill()
+  // Shadow — use v7 shadow sprite if available, else fallback ellipse
+  const shadowImg = shadowSprites[agent.def.id]
+  if (shadowImg?.complete && shadowImg.naturalWidth > 0) {
+    ctx.globalAlpha = (isOffline ? 0.4 : 1) * 0.35
+    ctx.drawImage(shadowImg, Math.round(sx - 20), Math.round(sy - 2), 40, 12)
+    ctx.globalAlpha = isOffline ? 0.4 : 1
+  } else {
+    ctx.beginPath()
+    ctx.ellipse(sx, sy + 4, 14, 6, 0, 0, Math.PI * 2)
+    ctx.fillStyle = 'rgba(0,0,0,0.3)'
+    ctx.fill()
+  }
 
   // Breathing disabled — caused sub-pixel flicker on pixel art sprites
   const breathOffset = 0
@@ -1598,12 +1671,14 @@ function drawAgent(
     let maxFrames: number
     let fps: number
 
+    const charSz = getCharSpriteSize(agent.def.id)
+
     if (useWalk) {
-      // Walk sprite: 6 frames per row, row 0 = SE, row 1 = SW
+      // Walk sprite: frames per row, row 0 = SE, row 1 = SW
       fps = 8
-      maxFrames = walkFrameCounts[agent.def.id] ?? 6
+      maxFrames = walkFrameCounts[agent.def.id] ?? 4
       const frame = Math.floor(t * fps) % maxFrames
-      srcX = frame * SPRITE_SIZE
+      srcX = frame * charSz
 
       // Direction: determine from movement toward current waypoint (or target)
       const wp = agent.path?.waypoints[agent.path.currentWaypoint]
@@ -1611,14 +1686,14 @@ function drawAgent(
       const dy = (wp ? wp[1] : agent.ty) - agent.y
       const movingSW = dx < -0.1 || (Math.abs(dx) < 0.1 && dy > 0.1)
       if (movingSW && walkHasSwRow[agent.def.id]) {
-        srcY = SPRITE_SIZE // Second row = SW direction
+        srcY = charSz // Second row = SW direction
       }
     } else {
       // Non-walk sprite (idle/sitting)
       fps = pose === 'sitting-work' ? 4 : pose === 'sitting-lounge' ? 2 : (agent.def.state === 'working' || agent.def.state === 'active') ? 8 : 4
-      maxFrames = Math.max(1, Math.floor(img.naturalWidth / SPRITE_SIZE))
+      maxFrames = Math.max(1, Math.floor(img.naturalWidth / charSz))
       const frame = Math.floor(t * fps) % maxFrames
-      srcX = frame * SPRITE_SIZE
+      srcX = frame * charSz
     }
 
     // Math.round prevents sub-pixel blur on pixel art
@@ -1628,7 +1703,7 @@ function drawAgent(
     ctx.imageSmoothingEnabled = false
     ctx.drawImage(
       img,
-      srcX, srcY, SPRITE_SIZE, SPRITE_SIZE,
+      srcX, srcY, charSz, charSz,
       drawX, drawY, SPRITE_DISPLAY, SPRITE_DISPLAY,
     )
     ctx.imageSmoothingEnabled = true
