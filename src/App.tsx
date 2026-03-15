@@ -326,8 +326,18 @@ function findPath(from: [number, number], to: [number, number]): [number, number
   return path
 }
 
+// ── Custom seating overrides (populated from backend API) ──
+let _seatingOverrides: Record<string, { room: string; col: number; row: number }> = {}
+
 // ── Get target tile based on state ──
 function getTargetTileForAgent(agentId: string, state: AgentState): { pos: [number, number]; room: RoomId } {
+  // Check custom seating override first (drag & drop assignments)
+  const override = _seatingOverrides[agentId]
+  if (override && (state === 'working' || state === 'active' || state === 'error')) {
+    releaseLoungeSpot(agentId)
+    return { pos: [override.col, override.row], room: override.room as RoomId }
+  }
+
   // Idle/offline → lounge
   if (state === 'idle' || state === 'offline') {
     const pos = assignLoungeSpot(agentId)
@@ -637,7 +647,131 @@ function screenToTile(mx: number, my: number, ox: number, oy: number): [number, 
   return [Math.round(col), Math.round(row)]
 }
 
-// Decoration images — loaded lazily
+// ── Asset loading system — sprites from v4 (128×128 isometric), future-proof for v6 ──
+const ASSET_VERSION = 'v4'  // Switch to 'v6' when Amir delivers
+const ASSET_BASE = `/assets/furniture/${ASSET_VERSION}`
+
+// All v4 asset IDs — preloaded on startup
+const V4_ASSETS = {
+  // Floors (128×128 isometric diamond tiles)
+  floors: ['floor_wood', 'floor_marble', 'floor_carpet_warm', 'floor_carpet_gray'],
+  // Walls (128×128 isometric wall segments)
+  walls: ['wall_plain', 'wall_window', 'wall_door'],
+  // Furniture (128×128 isometric objects)
+  furniture: [
+    'cubicle_work', 'lounge_sofa', 'coffee_station', 'meeting_table',
+    'reception_desk', 'server_rack',
+  ],
+}
+
+// Floor sprite mapping: floorType → v4 asset name (null = use flat color)
+const FLOOR_SPRITE_MAP: Record<number, string | null> = {
+  0: 'floor_wood',          // Open Space — parquet
+  1: null,                  // stone (flat color fallback)
+  2: 'floor_carpet_warm',   // Lounge — warm carpet
+  3: null,                  // Meeting Room (flat color — dark blue)
+  4: 'floor_marble',        // Reception — marble
+  5: null,                  // Dev Room (flat — dark, monitor glow)
+  6: 'floor_carpet_gray',   // Business Wing — gray carpet
+  7: 'floor_carpet_gray',   // QA Corner — gray carpet
+  8: 'floor_wood',          // Manager — wood
+}
+
+// Wall config per room edge — which wall sprite to use
+interface WallSegment { col: number; row: number; side: 'top' | 'left' | 'right' | 'bottom'; sprite: string }
+
+function generateRoomWalls(): WallSegment[] {
+  const segs: WallSegment[] = []
+  for (const room of ROOMS) {
+    if (room.id === 'reception') continue // open reception, no walls
+    // Top wall
+    for (let c = room.startCol; c <= room.endCol; c++) {
+      const sprite = (c === Math.floor((room.startCol + room.endCol) / 2)) ? 'wall_door' : (c % 3 === 0) ? 'wall_window' : 'wall_plain'
+      segs.push({ col: c, row: room.startRow, side: 'top', sprite })
+    }
+    // Left wall
+    for (let r = room.startRow; r <= room.endRow; r++) {
+      segs.push({ col: room.startCol, row: r, side: 'left', sprite: 'wall_plain' })
+    }
+  }
+  return segs
+}
+
+const ROOM_WALLS = generateRoomWalls()
+
+// Per-room furniture placement
+interface FurniturePlacement { asset: string; col: number; row: number; scale?: number }
+
+const ROOM_FURNITURE: Record<RoomId, FurniturePlacement[]> = {
+  reception: [
+    { asset: 'reception_desk', col: 10, row: 1 },
+  ],
+  dev: [
+    { asset: 'cubicle_work', col: 1, row: 4 },
+    { asset: 'cubicle_work', col: 1, row: 7 },
+    { asset: 'cubicle_work', col: 3, row: 4 },
+    { asset: 'server_rack', col: 4, row: 8 },
+  ],
+  openspace: [
+    { asset: 'cubicle_work', col: 7, row: 4 },
+    { asset: 'cubicle_work', col: 7, row: 7 },
+    { asset: 'cubicle_work', col: 10, row: 4 },
+    { asset: 'cubicle_work', col: 10, row: 7 },
+    { asset: 'cubicle_work', col: 13, row: 4 },
+    { asset: 'cubicle_work', col: 13, row: 7 },
+  ],
+  biz: [
+    { asset: 'cubicle_work', col: 16, row: 4 },
+    { asset: 'cubicle_work', col: 16, row: 7 },
+    { asset: 'cubicle_work', col: 18, row: 4 },
+    { asset: 'cubicle_work', col: 18, row: 7 },
+  ],
+  qa: [
+    { asset: 'cubicle_work', col: 1, row: 11 },
+    { asset: 'cubicle_work', col: 3, row: 11 },
+  ],
+  meeting: [
+    { asset: 'meeting_table', col: 17, row: 11 },
+  ],
+  lounge: [
+    { asset: 'lounge_sofa', col: 2, row: 15 },
+    { asset: 'lounge_sofa', col: 2, row: 17 },
+    { asset: 'lounge_sofa', col: 8, row: 15 },
+    { asset: 'lounge_sofa', col: 8, row: 17 },
+    { asset: 'coffee_station', col: 5, row: 15 },
+  ],
+  manager: [
+    { asset: 'cubicle_work', col: 17, row: 16 },
+  ],
+}
+
+// Image cache — all sprites loaded here
+const spriteCache: Record<string, HTMLImageElement> = {}
+let spritesInitialized = false
+
+function preloadSprites() {
+  if (spritesInitialized) return
+  spritesInitialized = true
+
+  const allAssets = [
+    ...V4_ASSETS.floors,
+    ...V4_ASSETS.walls,
+    ...V4_ASSETS.furniture,
+  ]
+  for (const name of allAssets) {
+    const img = new Image()
+    img.src = `${ASSET_BASE}/${name}.png`
+    spriteCache[name] = img
+  }
+  console.log(`[Assets] Preloading ${allAssets.length} sprites from ${ASSET_BASE}`)
+}
+
+function getSprite(name: string): HTMLImageElement | null {
+  const img = spriteCache[name]
+  return (img?.complete && img.naturalWidth > 0) ? img : null
+}
+
+// Legacy decoration/furniture images (keep existing system working)
 const decoImages: Record<string, HTMLImageElement> = {}
 const furnitureImages: Record<string, HTMLImageElement> = {}
 let decoInitialized = false
@@ -645,8 +779,8 @@ let decoInitialized = false
 function loadDecorations() {
   if (decoInitialized) return
   decoInitialized = true
+  preloadSprites() // also load v4 sprites
 
-  // Decoration sprites
   const decoTypes = [
     'alert_light', 'calendar', 'candle', 'clock', 'fan', 'headphones',
     'kanban_board', 'keyboard', 'lamp', 'monitor_wall', 'motivation_sign',
@@ -660,7 +794,6 @@ function loadDecorations() {
     decoImages[t] = img
   }
 
-  // Furniture sprites
   const furnTypes = [
     'bookshelf', 'carpet', 'chair', 'chair_office', 'chair_simple',
     'coat_rack', 'coffee_machine', 'desk', 'desk_large', 'desk_l_shaped',
@@ -672,6 +805,19 @@ function loadDecorations() {
     const img = new Image()
     img.src = `/assets/furniture/${t}.png`
     furnitureImages[t] = img
+  }
+
+  // Also load office/ subfolder assets
+  const officeTypes = [
+    'coffee_station', 'doormat', 'floor_carpet', 'floor_parquet',
+    'lamp_ceiling', 'lamp_desk', 'meeting_table', 'plant_cactus',
+    'plant_small', 'plant_succulent', 'plant_tall', 'printer',
+    'reception_desk', 'wall_art', 'wall_window', 'water_cooler', 'whiteboard',
+  ]
+  for (const t of officeTypes) {
+    const img = new Image()
+    img.src = `/assets/furniture/office/${t}.png`
+    decoImages[`office_${t}`] = img
   }
 }
 
@@ -1013,7 +1159,20 @@ function drawIsoTile(
   const hw = TILE_W / 2
   const hh = TILE_H / 2
 
-  // Diamond path
+  // Try sprite-based floor first
+  const spriteName = FLOOR_SPRITE_MAP[floorType]
+  const spriteImg = spriteName ? getSprite(spriteName) : null
+
+  if (spriteImg) {
+    // Sprite is 128×128 — draw scaled to tile size (TILE_W × TILE_H + extra height for depth)
+    const spriteScale = TILE_W / 128
+    const drawW = 128 * spriteScale
+    const drawH = 128 * spriteScale
+    ctx.drawImage(spriteImg, sx - drawW / 2, sy - drawH / 2, drawW, drawH)
+    return
+  }
+
+  // Fallback: flat color diamond
   ctx.beginPath()
   ctx.moveTo(sx, sy - hh)
   ctx.lineTo(sx + hw, sy)
@@ -1021,19 +1180,17 @@ function drawIsoTile(
   ctx.lineTo(sx - hw, sy)
   ctx.closePath()
 
-  // Checkerboard pattern with floor type colors
   const [c1, c2] = FLOOR_STYLES[floorType] ?? FLOOR_STYLES[0]
   const isDark = (col + row) % 2 === 0
   ctx.fillStyle = isDark ? c1 : c2
   ctx.fill()
 
-  // Subtle grid lines
   ctx.strokeStyle = 'rgba(255,255,255,0.04)'
   ctx.lineWidth = 0.5
   ctx.stroke()
 
-  // Wood grain texture for work zone (type 0)
-  if (floorType === 0) {
+  // Wood grain texture for type 0/8
+  if (floorType === 0 || floorType === 8) {
     ctx.save()
     ctx.clip()
     ctx.strokeStyle = 'rgba(255,255,255,0.03)'
@@ -1047,8 +1204,8 @@ function drawIsoTile(
     ctx.restore()
   }
 
-  // Carpet texture for lounge (type 2)
-  if (floorType === 2) {
+  // Carpet texture for types 2, 6, 7
+  if (floorType === 2 || floorType === 6 || floorType === 7) {
     ctx.save()
     ctx.clip()
     ctx.fillStyle = 'rgba(255,255,255,0.02)'
@@ -1769,10 +1926,91 @@ function drawScene(
 
   // (sofas removed per Tal's request)
   // Coffee area in bottom-right empty space
-  // Lounge furniture — coffee area
+  // ── Room furniture from v4 sprites ──
+  for (const room of ROOMS) {
+    const placements = ROOM_FURNITURE[room.id] ?? []
+    for (const fp of placements) {
+      const sprite = getSprite(fp.asset)
+      const [fIx, fIy] = toIso(fp.col, fp.row)
+      const fsx = ox + fIx
+      const fsy = oy + fIy
+      const scale = fp.scale ?? 1
+      drawables.push({ sortY: fp.col + fp.row, draw: () => {
+        if (sprite) {
+          // v4 sprites are 128×128; draw at tile scale with offset for height
+          const drawW = TILE_W * scale
+          const drawH = TILE_W * scale // square sprites
+          ctx.drawImage(sprite, fsx - drawW / 2, fsy - drawH + TILE_H / 2, drawW, drawH)
+        } else {
+          // Fallback: small colored diamond placeholder
+          const [c1] = FLOOR_STYLES[room.floorType] ?? FLOOR_STYLES[0]
+          ctx.globalAlpha = 0.5
+          ctx.fillStyle = c1
+          ctx.beginPath()
+          ctx.moveTo(fsx, fsy - 8)
+          ctx.lineTo(fsx + 12, fsy)
+          ctx.lineTo(fsx, fsy + 8)
+          ctx.lineTo(fsx - 12, fsy)
+          ctx.closePath()
+          ctx.fill()
+          ctx.globalAlpha = 1
+          // Label
+          ctx.font = '7px "Heebo", sans-serif'
+          ctx.fillStyle = 'rgba(255,255,255,0.3)'
+          ctx.textAlign = 'center'
+          ctx.fillText(fp.asset.replace(/_/g, ' '), fsx, fsy + 14)
+        }
+      }})
+    }
+  }
+
+  // ── Room wall sprites ──
+  for (const seg of ROOM_WALLS) {
+    const wallSprite = getSprite(seg.sprite)
+    const [wIx, wIy] = toIso(seg.col, seg.row)
+    const wsx = ox + wIx
+    const wsy = oy + wIy
+    if (seg.side === 'top') {
+      drawables.push({ sortY: seg.col + seg.row - 1, draw: () => {
+        if (wallSprite) {
+          const drawW = TILE_W
+          const drawH = TILE_W  // 128→64 scale
+          ctx.drawImage(wallSprite, wsx - drawW / 2, wsy - drawH + TILE_H / 4, drawW, drawH)
+        } else {
+          // Fallback: thin isometric wall line
+          ctx.strokeStyle = 'rgba(255,255,255,0.15)'
+          ctx.lineWidth = 2
+          ctx.beginPath()
+          ctx.moveTo(wsx - TILE_W / 2, wsy)
+          ctx.lineTo(wsx, wsy - TILE_H / 2)
+          ctx.lineTo(wsx + TILE_W / 2, wsy)
+          ctx.stroke()
+        }
+      }})
+    } else if (seg.side === 'left') {
+      drawables.push({ sortY: seg.col + seg.row - 0.5, draw: () => {
+        if (wallSprite) {
+          const drawW = TILE_W
+          const drawH = TILE_W
+          ctx.drawImage(wallSprite, wsx - drawW, wsy - drawH / 2, drawW, drawH)
+        } else {
+          ctx.strokeStyle = 'rgba(255,255,255,0.1)'
+          ctx.lineWidth = 2
+          ctx.beginPath()
+          ctx.moveTo(wsx - TILE_W / 2, wsy)
+          ctx.lineTo(wsx, wsy + TILE_H / 2)
+          ctx.stroke()
+        }
+      }})
+    }
+  }
+
+  // Lounge furniture — coffee area (procedural fallback)
   const lounge = ROOM_MAP.get('lounge')!
-  drawables.push({ sortY: lounge.startCol + 3 + lounge.startRow + 1, draw: () => drawCoffeeTable(ctx, ox, oy, lounge.startCol + 3, lounge.startRow + 1) })
-  drawables.push({ sortY: lounge.startCol + 1 + lounge.startRow + 1, draw: () => drawCoffeeMachine(ctx, ox, oy, lounge.startCol + 1, lounge.startRow + 1) })
+  if (!getSprite('coffee_station')) {
+    drawables.push({ sortY: lounge.startCol + 3 + lounge.startRow + 1, draw: () => drawCoffeeTable(ctx, ox, oy, lounge.startCol + 3, lounge.startRow + 1) })
+    drawables.push({ sortY: lounge.startCol + 1 + lounge.startRow + 1, draw: () => drawCoffeeMachine(ctx, ox, oy, lounge.startCol + 1, lounge.startRow + 1) })
+  }
 
   // Draw name labels at each agent's FIXED work + lounge spot
   const allDefs = allAgentDefs ?? []
@@ -2202,6 +2440,11 @@ export default function App() {
   const prevUpdatedAtRef = useRef<Map<string, number>>(new Map())
   const lastDefsUpdateRef = useRef<number>(0)
 
+  // Seating overrides — drag & drop custom seat assignments
+  const seatingOverridesRef = useRef<Record<string, { room: string; col: number; row: number }>>({})
+  const [seatingLoaded, setSeatingLoaded] = useState(false)
+  const dragAgentRef = useRef<{ agentId: string; startX: number; startY: number } | null>(null)
+
   // Edit mode state
   const [editMode, setEditMode] = useState(false)
   const [decorations, setDecorations] = useState<DecorationWithId[]>(() => loadLayout())
@@ -2300,6 +2543,31 @@ export default function App() {
     }
     canvas.addEventListener('wheel', handler, { passive: false })
     return () => canvas.removeEventListener('wheel', handler)
+  }, [])
+
+  // ── Load seating overrides from backend ──
+  useEffect(() => {
+    const backendBase = window.location.port === '5173' ? 'http://localhost:3001' : ''
+    fetch(`${backendBase}/api/seating`)
+      .then(r => r.json())
+      .then(data => {
+        if (data.ok && data.assignments) {
+          seatingOverridesRef.current = data.assignments
+          _seatingOverrides = data.assignments
+          // Re-apply seating to existing agents
+          for (const a of agentsRef.current) {
+            const override = data.assignments[a.def.id]
+            if (override) {
+              a.tx = override.col
+              a.ty = override.row
+              a.x = override.col
+              a.y = override.row
+            }
+          }
+        }
+        setSeatingLoaded(true)
+      })
+      .catch(() => setSeatingLoaded(true))
   }, [])
 
   // ── Live status polling from Gateway — discovers agents dynamically ──
@@ -2757,8 +3025,15 @@ export default function App() {
       }
     }
 
-    // Normal mode: start pan drag (middle click or left click on empty space)
+    // Normal mode: check if clicking an agent (for drag & drop seating)
     const agent = hitTestAgent(mx, my, agentsRef.current, ox, oy)
+    if (agent && editModeRef.current) {
+      // Start agent drag in edit mode
+      dragAgentRef.current = { agentId: agent.def.id, startX: mx, startY: my }
+      e.currentTarget.style.cursor = 'move'
+      e.preventDefault()
+      return
+    }
     if (!agent) {
       panDragRef.current = {
         startX: e.clientX,
@@ -2771,6 +3046,24 @@ export default function App() {
   }, [screenToCanvas])
 
   const handleMove = useCallback((e: React.MouseEvent<HTMLCanvasElement>) => {
+    // Agent drag (edit mode) — move agent sprite to follow cursor
+    if (dragAgentRef.current) {
+      const rect = e.currentTarget.getBoundingClientRect()
+      const [mx, my] = screenToCanvas(e.clientX, e.clientY, rect)
+      const { ox, oy } = originRef.current
+      // Convert screen to tile coords for agent position
+      const tileX = (mx - ox) / TILE_W + (my - oy) / TILE_H
+      const tileY = (my - oy) / TILE_H - (mx - ox) / TILE_W
+      const agent = agentsRef.current.find(a => a.def.id === dragAgentRef.current!.agentId)
+      if (agent) {
+        agent.x = tileX
+        agent.y = tileY
+        agent.path = null // cancel any active path
+      }
+      e.currentTarget.style.cursor = 'move'
+      return
+    }
+
     // Pan drag (normal mode)
     if (panDragRef.current) {
       const dx = (e.clientX - panDragRef.current.startX) / scaleRef.current
@@ -2828,6 +3121,36 @@ export default function App() {
   }, [screenToCanvas])
 
   const handleMouseUp = useCallback((e: React.MouseEvent<HTMLCanvasElement>) => {
+    // Agent drag drop — save new seating position
+    if (dragAgentRef.current) {
+      const agent = agentsRef.current.find(a => a.def.id === dragAgentRef.current!.agentId)
+      if (agent) {
+        const col = Math.round(agent.x)
+        const row = Math.round(agent.y)
+        const room = getRoomAt(col, row)
+        const roomId = room?.id ?? 'openspace'
+        // Snap to grid
+        agent.x = col
+        agent.y = row
+        agent.tx = col
+        agent.ty = row
+        agent.room = roomId
+        agent.path = null
+        // Save to backend
+        const override = { room: roomId, col, row }
+        seatingOverridesRef.current[agent.def.id] = override
+        _seatingOverrides[agent.def.id] = override
+        const backendBase = window.location.port === '5173' ? 'http://localhost:3001' : ''
+        fetch(`${backendBase}/api/seating`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ agentId: agent.def.id, ...override }),
+        }).catch(err => console.error('Failed to save seating:', err))
+      }
+      dragAgentRef.current = null
+      e.currentTarget.style.cursor = 'default'
+      return
+    }
     if (panDragRef.current) {
       const dx = Math.abs(e.clientX - panDragRef.current.startX)
       const dy = Math.abs(e.clientY - panDragRef.current.startY)

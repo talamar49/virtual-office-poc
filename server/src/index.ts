@@ -24,9 +24,11 @@ const PORT = parseInt(process.env.PORT || '3001');
 app.use(cors());
 app.use(express.json());
 import { transcribeRouter } from './routes/transcribe.js';
+import { seatingRouter } from './routes/seating.js';
 app.use('/api', apiRouter);
 app.use('/api/proxy', proxyRouter);
 app.use('/api/transcribe', transcribeRouter);
+app.use('/api/seating', seatingRouter);
 
 // Serve frontend static files (production)
 const staticDir = process.env.STATIC_DIR || path.join(__dirname, '../../dist');
