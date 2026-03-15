@@ -6,6 +6,27 @@ A real-time, isometric virtual office that brings your AI agent team to life. Wa
 
 ---
 
+## ⚡ One-Line Install
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/talamar49/virtual-office-poc/main/install.sh | bash
+```
+
+The script will:
+- Clone the repo
+- Install all dependencies (frontend + server)
+- Build for production
+- Ask for your Gateway URL + Token
+- Create and enable a systemd service (with auto-restart)
+- Print the URL where your office is running
+
+**Get your Gateway Token first:**
+```bash
+openclaw gateway status
+```
+
+---
+
 ## ✨ Features
 
 - 🗺️ **Isometric pixel-art office** — agents sit at their desks, move around, and animate in real-time
@@ -28,25 +49,31 @@ A real-time, isometric virtual office that brings your AI agent team to life. Wa
 
 ---
 
-## 🚀 Quick Start
+## 🚀 Manual Setup
 
-### 1. Clone the repo
+### 1. Get your Gateway Token
+
+```bash
+# Option 1: OpenClaw CLI
+openclaw gateway status
+
+# Option 2: Check config directly
+cat ~/.openclaw/openclaw.json | grep -A5 '"auth"'
+```
+
+The token is the value of `auth.token` in the `gateway` section.
+
+### 2. Clone and install
 
 ```bash
 git clone https://github.com/talamar49/virtual-office-poc.git
 cd virtual-office-poc
-```
 
-### 2. Install dependencies
-
-```bash
 npm install
 cd server && npm install && cd ..
 ```
 
 ### 3. Configure Gateway
-
-Copy the example env file for the server:
 
 ```bash
 cp server/.env.example server/.env
@@ -59,20 +86,6 @@ GATEWAY_URL=http://127.0.0.1:18789
 GATEWAY_TOKEN=your_gateway_token_here
 PORT=3001
 ```
-
-**How to get your Gateway Token:**
-
-```bash
-# Option 1: OpenClaw CLI
-openclaw gateway status
-
-# Option 2: Check config directly
-cat ~/.openclaw/openclaw.json | grep -A5 '"auth"'
-```
-
-The token is the value of `auth.token` in the `gateway` section.
-
-**Gateway URL** — defaults to `http://127.0.0.1:18789`. Change if your Gateway runs on a different host/port (e.g., remote server or Tailscale).
 
 ### 4. Run in development mode
 
@@ -93,18 +106,22 @@ Open http://localhost:3000 in your browser.
 ### Build
 
 ```bash
-npm run build        # Frontend → dist/
+npm run build               # Frontend → dist/
 cd server && npm run build  # Backend → server/dist/
 ```
 
-### Run with systemd
+### systemd service
+
+The `install.sh` script sets this up automatically. To do it manually:
 
 Create `/etc/systemd/system/virtual-office.service`:
 
 ```ini
 [Unit]
-Description=OpenClaw Virtual Office Server
+Description=OpenClaw Virtual Office
 After=network.target
+StartLimitIntervalSec=60
+StartLimitBurst=5
 
 [Service]
 Type=simple
@@ -112,19 +129,22 @@ User=your-user
 WorkingDirectory=/path/to/virtual-office-poc/server
 ExecStart=/usr/bin/node dist/index.js
 EnvironmentFile=/path/to/virtual-office-poc/server/.env
-Restart=on-failure
+Restart=always
 RestartSec=5
+WatchdogSec=60
 
 [Install]
 WantedBy=multi-user.target
 ```
 
 ```bash
+sudo systemctl daemon-reload
 sudo systemctl enable virtual-office
 sudo systemctl start virtual-office
-```
 
-Serve the frontend `dist/` folder with nginx or any static file server.
+# View logs
+sudo journalctl -u virtual-office -f
+```
 
 ---
 
@@ -188,6 +208,7 @@ WHISPER_MODEL=/path/to/whisper.cpp/models/ggml-small.bin
 | `server/src/services/gateway-client.ts` | OpenClaw Gateway API client |
 | `server/src/routes/proxy.ts` | Chat proxy route |
 | `public/assets/` | Pixel art sprites (characters, furniture, tiles) |
+| `install.sh` | One-line installer with systemd setup |
 
 ---
 
@@ -198,6 +219,7 @@ WHISPER_MODEL=/path/to/whisper.cpp/models/ggml-small.bin
 | `GATEWAY_URL` | `http://127.0.0.1:18789` | OpenClaw Gateway URL |
 | `GATEWAY_TOKEN` | *(required)* | Gateway auth token |
 | `PORT` | `3001` | Backend server port |
+| `STATIC_DIR` | *(optional)* | Serve frontend from server |
 | `WHISPER_BIN` | *(optional)* | Path to whisper.cpp binary |
 | `WHISPER_MODEL` | *(optional)* | Path to whisper model file |
 
@@ -213,7 +235,7 @@ WHISPER_MODEL=/path/to/whisper.cpp/models/ggml-small.bin
 **Code style:**
 - TypeScript strict mode
 - React functional components + hooks
-- Keep canvas rendering logic in `App.tsx`
+- Keep canvas rendering logic in `src/App.tsx`
 - Keep Gateway calls in `server/src/services/gateway-client.ts`
 
 ---
