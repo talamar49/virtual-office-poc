@@ -2326,14 +2326,18 @@ export default function App() {
     const handler = (e: WheelEvent) => {
       e.preventDefault()
       if (e.ctrlKey || e.metaKey) {
-        // Ctrl+scroll = pan
-        panRef.current.x -= e.deltaX / scaleRef.current
-        panRef.current.y -= e.deltaY / scaleRef.current
-        clampPan(panRef.current)
-      } else {
-        // Scroll = zoom (standard, like Google Maps / Figma)
-        const delta = -e.deltaY * 0.002
+        // Ctrl+scroll = zoom (pinch gesture on trackpad sends ctrlKey)
+        const delta = -e.deltaY * 0.01
         userZoomRef.current = Math.min(3, Math.max(0.3, userZoomRef.current + delta))
+      } else {
+        // Scroll = zoom (mouse wheel), shift+scroll = horizontal pan
+        if (e.shiftKey) {
+          panRef.current.x -= e.deltaY / scaleRef.current
+          clampPan(panRef.current)
+        } else {
+          const delta = -e.deltaY * 0.002
+          userZoomRef.current = Math.min(3, Math.max(0.3, userZoomRef.current + delta))
+        }
       }
     }
     canvas.addEventListener('wheel', handler, { passive: false })
@@ -2690,7 +2694,10 @@ export default function App() {
     return [mx, my]
   }, [])
 
+  const wasPanningRef = useRef(false)
   const handleClick = useCallback((e: React.MouseEvent<HTMLCanvasElement>) => {
+    // Skip click after pan drag
+    if (wasPanningRef.current) { wasPanningRef.current = false; return }
     // Skip synthetic click fired by browser after touchEnd (prevents double-toggle on mobile)
     if (Date.now() - lastTouchEndRef.current < 500) return
     const rect = e.currentTarget.getBoundingClientRect()
@@ -2733,26 +2740,56 @@ export default function App() {
     setSelectedId(prev => prev === agent?.def.id ? null : (agent?.def.id ?? null))
   }, [screenToCanvas])
 
+  // Pan-by-drag state
+  const panDragRef = useRef<{ startX: number; startY: number; startPanX: number; startPanY: number } | null>(null)
+
   const handleMouseDown = useCallback((e: React.MouseEvent<HTMLCanvasElement>) => {
-    if (!editModeRef.current) return
     const rect = e.currentTarget.getBoundingClientRect()
     const [mx, my] = screenToCanvas(e.clientX, e.clientY, rect)
     const { ox, oy } = originRef.current
-    const hitDeco = hitTestDeco(mx, my, decorationsRef.current, ox, oy)
-    if (hitDeco) {
-      dragRef.current = {
-        decoId: hitDeco._id,
-        startCol: hitDeco.col,
-        startRow: hitDeco.row,
-        startMx: mx,
-        startMy: my,
-        moved: false,
+
+    // Edit mode: drag decorations
+    if (editModeRef.current) {
+      const hitDeco = hitTestDeco(mx, my, decorationsRef.current, ox, oy)
+      if (hitDeco) {
+        dragRef.current = {
+          decoId: hitDeco._id,
+          startCol: hitDeco.col,
+          startRow: hitDeco.row,
+          startMx: mx,
+          startMy: my,
+          moved: false,
+        }
+        e.preventDefault()
+        return
       }
-      e.preventDefault()
+    }
+
+    // Normal mode: start pan drag (middle click or left click on empty space)
+    const agent = hitTestAgent(mx, my, agentsRef.current, ox, oy)
+    if (!agent) {
+      panDragRef.current = {
+        startX: e.clientX,
+        startY: e.clientY,
+        startPanX: panRef.current.x,
+        startPanY: panRef.current.y,
+      }
+      e.currentTarget.style.cursor = 'grabbing'
     }
   }, [screenToCanvas])
 
   const handleMove = useCallback((e: React.MouseEvent<HTMLCanvasElement>) => {
+    // Pan drag (normal mode)
+    if (panDragRef.current) {
+      const dx = (e.clientX - panDragRef.current.startX) / scaleRef.current
+      const dy = (e.clientY - panDragRef.current.startY) / scaleRef.current
+      panRef.current.x = panDragRef.current.startPanX + dx
+      panRef.current.y = panDragRef.current.startPanY + dy
+      clampPan(panRef.current)
+      e.currentTarget.style.cursor = 'grabbing'
+      return
+    }
+
     const rect = e.currentTarget.getBoundingClientRect()
     const [mx, my] = screenToCanvas(e.clientX, e.clientY, rect)
     const { ox, oy } = originRef.current
@@ -2798,10 +2835,16 @@ export default function App() {
     e.currentTarget.style.cursor = agent ? 'pointer' : 'default'
   }, [screenToCanvas])
 
-  const handleMouseUp = useCallback((_e: React.MouseEvent<HTMLCanvasElement>) => {
+  const handleMouseUp = useCallback((e: React.MouseEvent<HTMLCanvasElement>) => {
+    if (panDragRef.current) {
+      const dx = Math.abs(e.clientX - panDragRef.current.startX)
+      const dy = Math.abs(e.clientY - panDragRef.current.startY)
+      if (dx > 5 || dy > 5) wasPanningRef.current = true
+      panDragRef.current = null
+      e.currentTarget.style.cursor = 'default'
+    }
     if (dragRef.current) {
       if (dragRef.current.moved) {
-        // Sync React state from ref now that drag ended, then persist
         setDecorations([...decorationsRef.current])
         saveLayout(decorationsRef.current)
       }
@@ -3136,6 +3179,7 @@ export default function App() {
         onMouseDown={handleMouseDown}
         onMouseMove={handleMove}
         onMouseUp={handleMouseUp}
+        onMouseLeave={handleMouseUp}
         onTouchStart={handleTouchStart}
         onTouchMove={handleTouchMove}
         onTouchEnd={handleTouchEnd}
