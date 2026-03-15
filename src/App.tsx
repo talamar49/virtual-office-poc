@@ -679,18 +679,35 @@ function getTargetTile(agent: AgentDef): [number, number] {
 }
 
 function buildAgents(defs: AgentDef[]): AgentRuntime[] {
+  // Assign stable fixedIndex to ALL agents based on sorted ID order
+  const sortedIds = defs.map(d => d.id).sort()
+  for (let i = 0; i < sortedIds.length; i++) {
+    const id = sortedIds[i]
+    if (KNOWN_AGENTS[id]) {
+      KNOWN_AGENTS[id].fixedIndex = i
+    } else {
+      KNOWN_AGENTS[id] = {
+        name: id,
+        role: 'Agent',
+        emoji: AGENT_EMOJIS[i % AGENT_EMOJIS.length],
+        color: FALLBACK_COLORS[i % FALLBACK_COLORS.length],
+        frames: 6,
+        fixedIndex: i,
+      }
+    }
+  }
+
   // Expand grid dynamically based on agent count
   computeGridSize(defs.length)
   FLOOR_MAP = generateFloorMap()
   WALLS = generateWalls()
   BUG_WORKSTATIONS = generateBugWorkstations()
   BUG_SPOTS = generateBugSpots(defs.length)
-  // Generate cubicles for ALL agents — each agent has a fixed desk
   CUBICLE_POSITIONS = generateCubiclePositions(defs.length)
-  // Regenerate lounge spots — enough for ALL agents
   LOUNGE_SPOTS = generateLoungeSpots(defs.length)
+  console.log(`[Office] buildAgents: ${defs.length} agents, MAP ${MAP_COLS}x${MAP_ROWS}, lounge=${LOUNGE_SPOTS.length} spots, work=${CUBICLE_POSITIONS.length} spots, bug=${BUG_SPOTS.length} spots`)
   LOUNGE_SOFA_POSITIONS = LOUNGE_SPOTS.map(([c, r]): [number, number] => [c + 1, r - 1])
-  // Reset spot assignments
+  // Reset spot assignments — fresh every rebuild
   workAssignments.clear()
   loungeAssignments.clear()
   bugAssignments.clear()
