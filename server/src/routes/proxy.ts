@@ -162,14 +162,36 @@ function startResponseWatcher(
         data?.result?.messages ??
         (Array.isArray(data?.result) ? data.result : []);
 
-      // Filter to assistant text messages
+      // Internal message patterns to filter out
+      const INTERNAL_PATTERNS = [
+        /agent-to-agent announce/i,
+        /ANNOUNCE_SKIP/,
+        /HEARTBEAT_OK/,
+        /NO_REPLY/,
+        /^\[Inter-session message\]/,
+        /^\[.*announce.*step\]/i,
+      ];
+
+      function isInternalMessage(text: string): boolean {
+        return INTERNAL_PATTERNS.some(p => p.test(text.trim()));
+      }
+
+      function extractText(m: any): string {
+        if (typeof m.content === 'string') return m.content.trim();
+        if (Array.isArray(m.content)) {
+          const tb = m.content.find((b: any) => b.type === 'text');
+          return tb?.text?.trim() ?? '';
+        }
+        return m.text?.trim() ?? m.preview?.trim() ?? '';
+      }
+
+      // Filter to assistant text messages, excluding internal/system messages
       const assistantMsgs = messages.filter((m: any) => {
         if (m.role !== 'assistant') return false;
-        if (typeof m.content === 'string') return m.content.trim().length > 0;
-        if (Array.isArray(m.content)) {
-          return m.content.some((b: any) => b.type === 'text' && b.text?.trim());
-        }
-        return !!(m.text?.trim() || m.preview?.trim());
+        const text = extractText(m);
+        if (!text) return false;
+        if (isInternalMessage(text)) return false;
+        return true;
       });
 
       // First poll — establish baseline
@@ -473,8 +495,18 @@ proxyRouter.post('/history', async (req: Request, res: Response) => {
     console.warn(`[History] Gateway fetch failed for ${effectiveAgentId}:`, (err as Error).message);
   }
 
-  // Return merged history (local + gateway)
-  let history = getHistory(effectiveAgentId);
+  // Return merged history (local + gateway), excluding internal messages
+  const INTERNAL_PATTERNS_HIST = [
+    /agent-to-agent announce/i,
+    /ANNOUNCE_SKIP/,
+    /HEARTBEAT_OK/,
+    /NO_REPLY/,
+    /^\[Inter-session message\]/,
+    /^\[.*announce.*step\]/i,
+  ];
+  let history = getHistory(effectiveAgentId).filter(
+    m => !INTERNAL_PATTERNS_HIST.some(p => p.test(m.text.trim()))
+  );
 
   // Filter by `after` timestamp if provided
   if (after) {
