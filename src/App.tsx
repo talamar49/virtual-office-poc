@@ -36,6 +36,20 @@ const translations = {
     reception: 'קבלה',
     coffeeCorner: 'פינת קפה',
     meetingRoom: 'חדר ישיבות',
+    workingTask: 'עובד...',
+    connectedTask: 'מחובר',
+    idleTask: 'ממתין',
+    offlineTask: 'לא מחובר',
+    errorTask: 'שגיאה',
+    unknown: 'לא ידוע',
+    now: 'עכשיו',
+    minutesAgo: 'לפני {n} דקות',
+    hoursAgo: 'לפני {n} שעות',
+    daysAgo: 'לפני {n} ימים',
+    lastSeen: 'נראה לאחרונה',
+    model: 'מודל',
+    tokens: 'טוקנים',
+    session: 'סשן',
   },
   en: {
     virtualOffice: 'Virtual Office',
@@ -70,6 +84,20 @@ const translations = {
     reception: 'Reception',
     coffeeCorner: 'Coffee Corner',
     meetingRoom: 'Meeting Room',
+    workingTask: 'Working...',
+    connectedTask: 'Connected',
+    idleTask: 'Idle',
+    offlineTask: 'Offline',
+    errorTask: 'Error',
+    unknown: 'Unknown',
+    now: 'Just now',
+    minutesAgo: '{n} min ago',
+    hoursAgo: '{n} hours ago',
+    daysAgo: '{n} days ago',
+    lastSeen: 'Last seen',
+    model: 'Model',
+    tokens: 'Tokens',
+    session: 'Session',
   },
 } as const
 
@@ -456,41 +484,58 @@ function saveLayout(decos: DecorationWithId[]) {
   localStorage.setItem('office-layout-v2', JSON.stringify(clean))
 }
 
-// Available decoration types for the editor sidebar
-const AVAILABLE_DECO_TYPES = [
-  { type: 'plant_large', label: 'צמח גדול', emoji: '🌿' },
-  { type: 'plant_small', label: 'צמח קטן', emoji: '🌱' },
-  { type: 'bookshelf', label: 'ארון ספרים', emoji: '📚' },
-  { type: 'whiteboard', label: 'לוח', emoji: '📝' },
-  { type: 'kanban_board', label: 'קאנבן', emoji: '📋' },
-  { type: 'water_cooler', label: 'מים', emoji: '💧' },
-  { type: 'printer', label: 'מדפסת', emoji: '🖨️' },
-  { type: 'coffee_machine', label: 'קפה', emoji: '☕' },
-  { type: 'trophy', label: 'גביע', emoji: '🏆' },
-  { type: 'motivation_sign', label: 'שלט', emoji: '💪' },
-  { type: 'team_photo', label: 'תמונת צוות', emoji: '📸' },
-  { type: 'picture_frame', label: 'מסגרת', emoji: '🖼️' },
-  { type: 'mug', label: 'כוס', emoji: '☕' },
-  { type: 'keyboard', label: 'מקלדת', emoji: '⌨️' },
-  { type: 'mouse', label: 'עכבר', emoji: '🖱️' },
-  { type: 'laptop', label: 'לפטופ', emoji: '💻' },
-  { type: 'monitor_wall', label: 'מסך קיר', emoji: '🖥️' },
-  { type: 'server_rack_mini', label: 'שרת', emoji: '🗄️' },
-  { type: 'alert_light', label: 'אור התראה', emoji: '🚨' },
-  { type: 'candle', label: 'נר', emoji: '🕯️' },
-  { type: 'phone', label: 'טלפון', emoji: '📱' },
-  { type: 'stickers', label: 'מדבקות', emoji: '🏷️' },
-  { type: 'wireframes', label: 'וויירפריימס', emoji: '📐' },
-  { type: 'tea_cup', label: 'תה', emoji: '🍵' },
-  { type: 'poster', label: 'פוסטר', emoji: '🎨' },
-  { type: 'lamp', label: 'מנורה', emoji: '💡' },
-  { type: 'trash_bin', label: 'פח', emoji: '🗑️' },
-  { type: 'clock', label: 'שעון', emoji: '🕐' },
-  { type: 'fan', label: 'מאוורר', emoji: '🌀' },
-  { type: 'calendar', label: 'לוח שנה', emoji: '📅' },
-  { type: 'headphones', label: 'אוזניות', emoji: '🎧' },
-  { type: 'warning_sign', label: 'שלט אזהרה', emoji: '⚠️' },
-]
+// Available decoration types for the editor sidebar — bilingual
+const DECO_LABELS: Record<string, { he: string; en: string }> = {
+  plant_large: { he: 'צמח גדול', en: 'Large Plant' },
+  plant_small: { he: 'צמח קטן', en: 'Small Plant' },
+  bookshelf: { he: 'ארון ספרים', en: 'Bookshelf' },
+  whiteboard: { he: 'לוח', en: 'Whiteboard' },
+  kanban_board: { he: 'קאנבן', en: 'Kanban Board' },
+  water_cooler: { he: 'מים', en: 'Water Cooler' },
+  printer: { he: 'מדפסת', en: 'Printer' },
+  coffee_machine: { he: 'קפה', en: 'Coffee Machine' },
+  trophy: { he: 'גביע', en: 'Trophy' },
+  motivation_sign: { he: 'שלט', en: 'Sign' },
+  team_photo: { he: 'תמונת צוות', en: 'Team Photo' },
+  picture_frame: { he: 'מסגרת', en: 'Picture Frame' },
+  mug: { he: 'כוס', en: 'Mug' },
+  keyboard: { he: 'מקלדת', en: 'Keyboard' },
+  mouse: { he: 'עכבר', en: 'Mouse' },
+  laptop: { he: 'לפטופ', en: 'Laptop' },
+  monitor_wall: { he: 'מסך קיר', en: 'Wall Monitor' },
+  server_rack_mini: { he: 'שרת', en: 'Server Rack' },
+  alert_light: { he: 'אור התראה', en: 'Alert Light' },
+  candle: { he: 'נר', en: 'Candle' },
+  phone: { he: 'טלפון', en: 'Phone' },
+  stickers: { he: 'מדבקות', en: 'Stickers' },
+  wireframes: { he: 'וויירפריימס', en: 'Wireframes' },
+  tea_cup: { he: 'תה', en: 'Tea' },
+  poster: { he: 'פוסטר', en: 'Poster' },
+  lamp: { he: 'מנורה', en: 'Lamp' },
+  trash_bin: { he: 'פח', en: 'Trash Bin' },
+  clock: { he: 'שעון', en: 'Clock' },
+  fan: { he: 'מאוורר', en: 'Fan' },
+  calendar: { he: 'לוח שנה', en: 'Calendar' },
+  headphones: { he: 'אוזניות', en: 'Headphones' },
+  warning_sign: { he: 'שלט אזהרה', en: 'Warning Sign' },
+}
+const DECO_EMOJIS: Record<string, string> = {
+  plant_large: '🌿', plant_small: '🌱', bookshelf: '📚', whiteboard: '📝',
+  kanban_board: '📋', water_cooler: '💧', printer: '🖨️', coffee_machine: '☕',
+  trophy: '🏆', motivation_sign: '💪', team_photo: '📸', picture_frame: '🖼️',
+  mug: '☕', keyboard: '⌨️', mouse: '🖱️', laptop: '💻', monitor_wall: '🖥️',
+  server_rack_mini: '🗄️', alert_light: '🚨', candle: '🕯️', phone: '📱',
+  stickers: '🏷️', wireframes: '📐', tea_cup: '🍵', poster: '🎨', lamp: '💡',
+  trash_bin: '🗑️', clock: '🕐', fan: '🌀', calendar: '📅', headphones: '🎧',
+  warning_sign: '⚠️',
+}
+let _currentLang: Lang = 'he'
+function getDecoTypes() {
+  return Object.keys(DECO_LABELS).map(type => ({
+    type, label: DECO_LABELS[type][_currentLang], emoji: DECO_EMOJIS[type] || '📦',
+  }))
+}
+const AVAILABLE_DECO_TYPES = getDecoTypes()
 
 // Decoration hit-test
 function hitTestDeco(
@@ -580,13 +625,22 @@ const FALLBACK_COLORS = [
 ]
 
 // Build AgentDef from a session key (e.g. "agent:yogi:discord:channel:123")
-/** State-based fallback labels when no real task text is available */
-const TASK_FALLBACKS: Record<string, string> = {
+/** State-based fallback labels — uses current i18n */
+let TASK_FALLBACKS: Record<string, string> = {
   working: 'עובד...',
   active: 'מחובר',
   idle: 'ממתין',
   offline: 'לא מחובר',
   error: 'שגיאה',
+}
+function updateTaskFallbacks(t: typeof translations[Lang]) {
+  TASK_FALLBACKS = {
+    working: t.workingTask,
+    active: t.connectedTask,
+    idle: t.idleTask,
+    offline: t.offlineTask,
+    error: t.errorTask,
+  }
 }
 
 /** Extract best task text from a session's last message(s) */
@@ -2110,6 +2164,9 @@ export default function App() {
   const { lang, t, toggleLang, dir } = useI18n()
   const i18nRef = useRef(t)
   i18nRef.current = t
+  updateTaskFallbacks(t)
+  _i18nForTimeAgo = t
+  _currentLang = lang
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const [hoverAgentId, _setHoverAgentId] = useState<string | null>(null)
   const hoverAgentIdRef = useRef<string | null>(null)
@@ -2406,7 +2463,7 @@ export default function App() {
                 id: `${a.def.id}-${Date.now()}`,
                 agentName: a.def.name,
                 agentEmoji: a.def.emoji,
-                message: 'סיים משימה',
+                message: i18nRef.current.idle === 'ממתין' ? 'סיים משימה' : 'Task completed',
                 timestamp: Date.now(),
               }
               setNotifications(prev => [...prev.slice(-(MAX_VISIBLE_NOTIFICATIONS - 1)), notif])
@@ -3203,7 +3260,7 @@ export default function App() {
           <div style={{
             display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 4,
           }}>
-            {AVAILABLE_DECO_TYPES.map(dt => (
+            {getDecoTypes().map(dt => (
               <button
                 key={dt.type}
                 onClick={() => setPlacementType(prev => prev === dt.type ? null : dt.type)}
@@ -3346,13 +3403,15 @@ export default function App() {
   )
 }
 
+let _i18nForTimeAgo: typeof translations[Lang] = translations.he
 function timeAgo(ts: number | undefined): string {
-  if (!ts) return 'לא ידוע'
+  const t = _i18nForTimeAgo
+  if (!ts) return t.unknown
   const diff = Date.now() - ts
-  if (diff < 60_000) return 'עכשיו'
-  if (diff < 3_600_000) return `לפני ${Math.floor(diff / 60_000)} דקות`
-  if (diff < 86_400_000) return `לפני ${Math.floor(diff / 3_600_000)} שעות`
-  return `לפני ${Math.floor(diff / 86_400_000)} ימים`
+  if (diff < 60_000) return t.now
+  if (diff < 3_600_000) return t.minutesAgo.replace('{n}', String(Math.floor(diff / 60_000)))
+  if (diff < 86_400_000) return t.hoursAgo.replace('{n}', String(Math.floor(diff / 3_600_000)))
+  return t.daysAgo.replace('{n}', String(Math.floor(diff / 86_400_000)))
 }
 
 function InfoBox({ label, children }: { label: string; children: React.ReactNode }) {
@@ -3373,7 +3432,7 @@ function ExpandableTask({ task, hasRealTask, compact }: {
   const isLong = task.length > 40
 
   return (
-    <InfoBox label="משימה נוכחית">
+    <InfoBox label={_i18nForTimeAgo.currentTask}>
       <div
         onClick={isLong ? () => setExpanded(e => !e) : undefined}
         style={{
