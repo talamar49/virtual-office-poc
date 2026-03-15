@@ -2,3 +2,11 @@ node_modules/
 dist/
 .vite/
 *.log
+
+# Environment files
+.env
+.env.*
+.env.local
+.env.production
+server/.env
+server/.env.*

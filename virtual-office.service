@@ -5,13 +5,12 @@ Wants=network.target
 
 [Service]
 Type=simple
-User=tal
-WorkingDirectory=/home/tal/projects/virtual-office-poc/server
+User=%i
+WorkingDirectory=%h/projects/virtual-office-poc/server
+EnvironmentFile=%h/projects/virtual-office-poc/server/.env
 Environment=NODE_ENV=production
 Environment=PORT=3001
-Environment=GATEWAY_URL=http://127.0.0.1:18789
-Environment=GATEWAY_TOKEN=YOUR_TOKEN_HERE
-Environment=STATIC_DIR=/home/tal/projects/virtual-office-poc/dist
+Environment=STATIC_DIR=%h/projects/virtual-office-poc/dist
 ExecStart=/usr/bin/node dist/index.js
 Restart=always
 RestartSec=5
