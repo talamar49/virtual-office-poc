@@ -50,6 +50,15 @@ const translations = {
     model: 'מודל',
     tokens: 'טוקנים',
     session: 'סשן',
+    editMode: 'מצב עריכה',
+    designOffice: '🎨 עיצוב משרד',
+    delete: '🗑️ מחק',
+    reset: '🔄 איפוס',
+    muteSound: 'כבה סאונד',
+    enableSound: 'הפעל סאונד',
+    backToOffice: 'חזור למשרד',
+    dashboard: 'Dashboard',
+    taskCompleted: 'סיים משימה',
   },
   en: {
     virtualOffice: 'Virtual Office',
@@ -98,6 +107,15 @@ const translations = {
     model: 'Model',
     tokens: 'Tokens',
     session: 'Session',
+    editMode: 'Edit Mode',
+    designOffice: '🎨 Design Office',
+    delete: '🗑️ Delete',
+    reset: '🔄 Reset',
+    muteSound: 'Mute Sound',
+    enableSound: 'Enable Sound',
+    backToOffice: 'Back to Office',
+    dashboard: 'Dashboard',
+    taskCompleted: 'Task completed',
   },
 } as const
 
@@ -1687,7 +1705,7 @@ function getIsoBounds() {
 
 // ── Main scene drawing ──
 
-interface I18nLabels { loungeZone: string; workZone: string; errorZone: string; virtualOffice: string; active: string; working: string; idle: string; offline: string; error: string }
+interface I18nLabels { loungeZone: string; workZone: string; errorZone: string; virtualOffice: string; active: string; working: string; idle: string; offline: string; error: string; editMode: string }
 function drawScene(
   ctx: CanvasRenderingContext2D,
   w: number, h: number,
@@ -1721,7 +1739,7 @@ function drawScene(
   ctx.fillStyle = '#7a7aaa'
   ctx.font = `bold ${f.title}px "Heebo", "Segoe UI", sans-serif`
   ctx.textAlign = 'center'
-  const labels = i18nLabels ?? { loungeZone: '☕ Lounge', workZone: '💻 Work Zone', errorZone: '🐛 Errors', virtualOffice: '🏢 Virtual Office' }
+  const labels: I18nLabels = i18nLabels ?? { loungeZone: '☕ Lounge', workZone: '💻 Work Zone', errorZone: '🐛 Errors', virtualOffice: '🏢 Virtual Office', active: 'Active', working: 'Working', idle: 'Idle', offline: 'Offline', error: 'Error', editMode: 'Edit Mode' }
   ctx.fillText(labels.virtualOffice, w / 2, 28)
 
   // Zone labels — centered in each horizontal zone
@@ -1882,7 +1900,7 @@ function drawScene(
     ctx.font = `bold ${f.title}px "Heebo", "Segoe UI", sans-serif`
     ctx.textAlign = 'center'
     ctx.fillStyle = 'rgba(150,150,255,0.6)'
-    ctx.fillText('מצב עריכה', w / 2, 50)
+    ctx.fillText(labels.editMode || 'Edit Mode', w / 2, 50)
   }
 }
 
@@ -2463,7 +2481,7 @@ export default function App() {
                 id: `${a.def.id}-${Date.now()}`,
                 agentName: a.def.name,
                 agentEmoji: a.def.emoji,
-                message: i18nRef.current.idle === 'ממתין' ? 'סיים משימה' : 'Task completed',
+                message: i18nRef.current.taskCompleted,
                 timestamp: Date.now(),
               }
               setNotifications(prev => [...prev.slice(-(MAX_VISIBLE_NOTIFICATIONS - 1)), notif])
@@ -2607,7 +2625,7 @@ export default function App() {
           : null,
       }
       const tr = i18nRef.current
-      drawScene(offCtx, w, h, t, agents, hoverAgentIdRef.current, selectedIdRef.current, panRef.current.x, panRef.current.y, fonts, decorationsRef.current, editState, agentDefsRef.current, { loungeZone: tr.loungeZone, workZone: tr.workZone, errorZone: tr.errorZone, virtualOffice: `🏢 ${tr.virtualOffice}`, active: tr.active, working: tr.working, idle: tr.idle, offline: tr.offline, error: tr.error })
+      drawScene(offCtx, w, h, t, agents, hoverAgentIdRef.current, selectedIdRef.current, panRef.current.x, panRef.current.y, fonts, decorationsRef.current, editState, agentDefsRef.current, { loungeZone: tr.loungeZone, workZone: tr.workZone, errorZone: tr.errorZone, virtualOffice: `🏢 ${tr.virtualOffice}`, active: tr.active, working: tr.working, idle: tr.idle, offline: tr.offline, error: tr.error, editMode: tr.editMode })
 
       offCtx.restore()
 
@@ -3136,7 +3154,7 @@ export default function App() {
           color: '#aaa', fontFamily: '"Press Start 2P", cursive',
           boxShadow: 'inset -2px -2px 0 #0a0a1a, inset 2px 2px 0 #2a2a4a',
         }}
-        title="הגדרות"
+        title={t.settings}
       >
         ⚙️
       </button>
@@ -3157,7 +3175,7 @@ export default function App() {
           fontFamily: '"Press Start 2P", cursive',
           boxShadow: 'inset -2px -2px 0 #0a0a1a, inset 2px 2px 0 #2a2a4a',
         }}
-        title={soundEnabled ? 'כבה סאונד' : 'הפעל סאונד'}
+        title={soundEnabled ? t.muteSound : t.enableSound}
       >
         {soundEnabled ? '🔊' : '🔇'}
       </button>
@@ -3176,7 +3194,7 @@ export default function App() {
           boxShadow: 'inset -2px -2px 0 #0a0a1a, inset 2px 2px 0 #2a2a4a',
           zIndex: 20,
         }}
-        title={dashboardMode ? 'חזור למשרד' : 'Dashboard'}
+        title={dashboardMode ? t.backToOffice : t.dashboard}
       >
         📊
       </button>
@@ -3194,7 +3212,7 @@ export default function App() {
           boxShadow: 'inset -2px -2px 0 #0a0a1a, inset 2px 2px 0 #2a2a4a',
         }}
       >
-        {'🎨 עיצוב משרד'}
+        {t.designOffice}
       </button>
 
       {/* Edit mode toolbar */}
@@ -3207,7 +3225,7 @@ export default function App() {
           fontFamily: '"Press Start 2P", cursive',
           boxShadow: 'inset -2px -2px 0 #0a0a1a, inset 2px 2px 0 #2a2a4a',
         }}>
-          <span style={{ color: '#aaf', fontSize: 8, fontWeight: 600 }}>מצב עריכה</span>
+          <span style={{ color: '#aaf', fontSize: 8, fontWeight: 600 }}>{t.editMode}</span>
           {selectedDecoId !== null && (
             <button
               onClick={() => {
@@ -3225,7 +3243,7 @@ export default function App() {
                 boxShadow: 'inset -2px -2px 0 #0a0a1a, inset 2px 2px 0 #4a2a2a',
               }}
             >
-              {'🗑️ מחק'}
+              {t.delete}
             </button>
           )}
           <button
@@ -3242,7 +3260,7 @@ export default function App() {
               boxShadow: 'inset -2px -2px 0 #0a0a1a, inset 2px 2px 0 #2a2a4a',
             }}
           >
-            {'🔄 איפוס'}
+            {t.reset}
           </button>
         </div>
       )}
@@ -3375,8 +3393,8 @@ export default function App() {
                 </span>
               </div>
               <div style={{ fontSize: 11, color: '#888', display: 'flex', gap: 8, marginTop: 2 }}>
-                <span>{getZoneForState(selectedAgent.state) === 'work' ? '💻 עבודה'
-                  : getZoneForState(selectedAgent.state) === 'bugs' ? '🐛 באגים' : '☕ מנוחה'}</span>
+                <span>{getZoneForState(selectedAgent.state) === 'work' ? t.workZone
+                  : getZoneForState(selectedAgent.state) === 'bugs' ? t.errorZone : t.loungeZone}</span>
                 {selectedAgent.lastUpdated && <span>🕐 {timeAgo(selectedAgent.lastUpdated)}</span>}
               </div>
             </div>
@@ -3463,7 +3481,7 @@ function ExpandableTask({ task, hasRealTask, compact }: {
             fontFamily: '"Heebo", sans-serif',
           }}
         >
-          {expanded ? '▲ פחות' : '▼ עוד...'}
+          {expanded ? '▲' : '▼'}
         </div>
       )}
     </InfoBox>
@@ -3971,7 +3989,7 @@ function ChatInput({ agentId, agentColor, compact, onSend, onFetchHistory, t }: 
             flexShrink: 0, transition: 'background 0.3s, transform 0.15s',
             transform: text.trim() ? 'scale(1.05)' : 'scale(1)',
           }}
-          title="שלח"
+          title={t.send}
         >
           {status === 'sending' ? (
             <span style={{ display: 'inline-block', width: 16, height: 16, border: '2px solid rgba(255,255,255,0.3)', borderTopColor: '#fff', borderRadius: '50%', animation: 'chatSpin 0.6s linear infinite' }} />
