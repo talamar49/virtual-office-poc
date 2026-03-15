@@ -663,6 +663,18 @@ function agentDefFromSession(sessionKey: string, index: number, updatedAt: numbe
 const _now = Date.now()
 // No hardcoded agents — demo mode shows empty office until Gateway connects
 const DEFAULT_AGENT_DEFS: AgentDef[] = []
+const STATE_COLORS: Record<AgentState, { color: string; dot: string }> = {
+  active:  { color: '#4CAF50', dot: '🟢' },
+  working: { color: '#2196F3', dot: '🔵' },
+  idle:    { color: '#FFC107', dot: '🟡' },
+  offline: { color: '#757575', dot: '⚫' },
+  error:   { color: '#f44336', dot: '🔴' },
+}
+function getStateMeta(state: AgentState, t: { active: string; working: string; idle: string; offline: string; error: string }) {
+  const c = STATE_COLORS[state]
+  return { color: c.color, dot: c.dot, label: t[state] }
+}
+// Legacy compat — used in places without i18n context
 const STATE_META: Record<AgentState, { color: string; label: string; dot: string }> = {
   active:  { color: '#4CAF50', label: 'פעיל',      dot: '🟢' },
   working: { color: '#2196F3', label: 'עובד',      dot: '🔵' },
@@ -1621,7 +1633,7 @@ function getIsoBounds() {
 
 // ── Main scene drawing ──
 
-interface I18nLabels { loungeZone: string; workZone: string; errorZone: string; virtualOffice: string }
+interface I18nLabels { loungeZone: string; workZone: string; errorZone: string; virtualOffice: string; active: string; working: string; idle: string; offline: string; error: string }
 function drawScene(
   ctx: CanvasRenderingContext2D,
   w: number, h: number,
@@ -2538,7 +2550,7 @@ export default function App() {
           : null,
       }
       const tr = i18nRef.current
-      drawScene(offCtx, w, h, t, agents, hoverAgentIdRef.current, selectedIdRef.current, panRef.current.x, panRef.current.y, fonts, decorationsRef.current, editState, agentDefsRef.current, { loungeZone: tr.loungeZone, workZone: tr.workZone, errorZone: tr.errorZone, virtualOffice: `🏢 ${tr.virtualOffice}` })
+      drawScene(offCtx, w, h, t, agents, hoverAgentIdRef.current, selectedIdRef.current, panRef.current.x, panRef.current.y, fonts, decorationsRef.current, editState, agentDefsRef.current, { loungeZone: tr.loungeZone, workZone: tr.workZone, errorZone: tr.errorZone, virtualOffice: `🏢 ${tr.virtualOffice}`, active: tr.active, working: tr.working, idle: tr.idle, offline: tr.offline, error: tr.error })
 
       offCtx.restore()
 
@@ -2947,7 +2959,7 @@ export default function App() {
   }
 
   return (
-    <div style={{ width: '100vw', height: '100vh', position: 'relative', overflow: 'hidden' }}>
+    <div style={{ width: '100vw', height: '100vh', position: 'relative', overflow: 'hidden', direction: dir as any }}>
       {/* Global pixel art styles */}
       <style>{`
         @import url('https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap');
@@ -3302,7 +3314,7 @@ export default function App() {
                   background: `${STATE_META[selectedAgent.state].color}22`,
                   color: STATE_META[selectedAgent.state].color,
                 }}>
-                  {STATE_META[selectedAgent.state].dot} {STATE_META[selectedAgent.state].label}
+                  {STATE_META[selectedAgent.state].dot} {t[selectedAgent.state]}
                 </span>
               </div>
               <div style={{ fontSize: 11, color: '#888', display: 'flex', gap: 8, marginTop: 2 }}>
