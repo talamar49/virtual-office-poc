@@ -416,6 +416,28 @@ proxyRouter.post('/send', async (req: Request, res: Response) => {
     };
     addMessage(effectiveAgentId, sentMsg);
 
+    // Mirror user message to Discord channel (so it appears in the agent's channel)
+    const channelMatch = sessionKey.match(/discord:channel:(\d+)/);
+    if (channelMatch) {
+      const discordChannelId = channelMatch[1];
+      fetch(`${gatewayUrl}/tools/invoke`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${gatewayToken}`,
+        },
+        body: JSON.stringify({
+          tool: 'message',
+          args: {
+            action: 'send',
+            channel: 'discord',
+            target: discordChannelId,
+            message: `💬 **[Virtual Office Chat]**\n${message}`,
+          },
+        }),
+      }).catch(err => console.warn('[Proxy] Failed to mirror message to Discord:', err.message));
+    }
+
     // Start response watcher — polls for agent's reply and broadcasts via WebSocket
     startResponseWatcher(effectiveAgentId, sessionKey, gatewayToken, gatewayUrl);
 
