@@ -274,8 +274,8 @@ function getRoomAt(col: number, row: number): Room | undefined {
 // ── Isometric constants ──
 const TILE_W = 64
 const TILE_H = 32
-const SPRITE_SIZE = 32
-const SPRITE_DISPLAY = 64
+const SPRITE_SIZE = 64    // v6/v7 assets are 64×64
+const SPRITE_DISPLAY = 64 // display size matches native (1:1, no upscale)
 
 // Fixed map size for room-based layout
 let MAP_COLS = 21
@@ -655,8 +655,10 @@ const V4_BASE = '/assets/furniture/v4'
 const V6_ASSETS = [
   // Floors
   'floor_wood', 'floor_marble', 'floor_carpet_gray', 'floor_carpet_green', 'floor_carpet_dark',
-  // Walls
+  // Walls — base + oriented variants (north = top-left edge, east = top-right edge)
   'wall_plain', 'wall_window', 'wall_door', 'wall_glass',
+  'wall_plain_north', 'wall_window_north', 'wall_door_north', 'wall_glass_north',
+  'wall_plain_east', 'wall_window_east', 'wall_door_east', 'wall_glass_east',
   // Furniture
   'bookshelf', 'manager_desk', 'meeting_table', 'plant_large', 'plant_small',
   'printer', 'reception_desk', 'server_rack', 'water_cooler',
@@ -681,21 +683,30 @@ const FLOOR_SPRITE_MAP: Record<number, string | null> = {
   8: 'floor_wood',          // Manager — wood
 }
 
-// Wall config per room edge — which wall sprite to use
-interface WallSegment { col: number; row: number; side: 'top' | 'left' | 'right' | 'bottom'; sprite: string }
+// Wall config per room edge — orientation-aware sprites
+// North walls (top-left edge in iso) use wall_*_north, East walls (top-right edge) use wall_*_east
+type WallOrientation = 'north' | 'east'
+interface WallSegment { col: number; row: number; side: 'top' | 'left'; orientation: WallOrientation; sprite: string }
+
+/** Get wall sprite name with orientation suffix */
+function wallSpriteName(base: string, orient: WallOrientation): string {
+  // Try oriented sprite first (wall_plain_north), fall back to base (wall_plain)
+  return `${base}_${orient}`
+}
 
 function generateRoomWalls(): WallSegment[] {
   const segs: WallSegment[] = []
   for (const room of ROOMS) {
-    if (room.id === 'reception') continue // open reception, no walls
-    // Top wall
+    if (room.id === 'reception') continue
+    // Top wall (north-facing — left-upper edge in isometric)
     for (let c = room.startCol; c <= room.endCol; c++) {
-      const sprite = (c === Math.floor((room.startCol + room.endCol) / 2)) ? 'wall_door' : (c % 3 === 0) ? 'wall_window' : 'wall_plain'
-      segs.push({ col: c, row: room.startRow, side: 'top', sprite })
+      const base = (c === Math.floor((room.startCol + room.endCol) / 2)) ? 'wall_door'
+        : (c % 3 === 0) ? 'wall_window' : 'wall_plain'
+      segs.push({ col: c, row: room.startRow, side: 'top', orientation: 'north', sprite: wallSpriteName(base, 'north') })
     }
-    // Left wall
+    // Left wall (east-facing — right-upper edge in isometric)
     for (let r = room.startRow; r <= room.endRow; r++) {
-      segs.push({ col: room.startCol, row: r, side: 'left', sprite: 'wall_plain' })
+      segs.push({ col: room.startCol, row: r, side: 'left', orientation: 'east', sprite: wallSpriteName('wall_plain', 'east') })
     }
   }
   return segs
@@ -2077,7 +2088,8 @@ function drawScene(
 
   // ── Room wall sprites ──
   for (const seg of ROOM_WALLS) {
-    const wallSprite = getSprite(seg.sprite)
+    // Try oriented sprite (wall_plain_north), fall back to base (wall_plain)
+    const wallSprite = getSprite(seg.sprite) ?? getSprite(seg.sprite.replace(/_north$|_east$/, ''))
     const [wIx, wIy] = toIso(seg.col, seg.row)
     const wsx = ox + wIx
     const wsy = oy + wIy
