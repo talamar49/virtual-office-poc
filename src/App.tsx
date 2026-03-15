@@ -733,15 +733,15 @@ const V6_ASSETS = [
   'wall_plain', 'wall_window', 'wall_door', 'wall_glass',
   'wall_plain_north', 'wall_window_north', 'wall_door_north', 'wall_glass_north',
   'wall_plain_east', 'wall_window_east', 'wall_door_east', 'wall_glass_east',
-  // Furniture
-  'bookshelf', 'manager_desk', 'meeting_table', 'plant_large', 'plant_small',
+  // Furniture — all v6 now!
+  'bookshelf', 'cubicle_work', 'coffee_station', 'lounge_sofa',
+  'manager_desk', 'meeting_table', 'plant_large', 'plant_small',
   'printer', 'reception_desk', 'server_rack', 'water_cooler',
 ]
 
-// v4 fallback assets (128×128) — used when v6 version doesn't exist
+// v4 fallback assets (128×128) — only for assets not yet in v6
 const V4_FALLBACK = [
-  'cubicle_work', 'lounge_sofa', 'coffee_station',
-  'floor_carpet_warm',  // v6 has warm→green, keep v4 warm
+  'floor_carpet_warm',  // v6 has warm→green, keep v4 warm as extra option
 ]
 
 // Floor sprite mapping: floorType → asset name
