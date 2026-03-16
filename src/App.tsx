@@ -85,6 +85,9 @@ const translations = {
     exportImage: 'ייצוא PNG',
     exportPdf: 'ייצוא PDF',
     exportMenu: '📸 ייצוא',
+    share: '🔗 שתף',
+    viewerMode: '👁️ מצב צפייה',
+    linkCopied: 'הקישור הועתק!',
   },
   en: {
     virtualOffice: 'Virtual Office',
@@ -167,6 +170,9 @@ const translations = {
     exportImage: 'Export PNG',
     exportPdf: 'Export PDF',
     exportMenu: '📸 Export',
+    share: '🔗 Share',
+    viewerMode: '👁️ Viewer Mode',
+    linkCopied: 'Link copied!',
   },
 } as const
 
@@ -3245,8 +3251,12 @@ export default function App() {
   // Notification state
   const [notifications, setNotifications] = useState<OfficeNotification[]>([])
   const prevStatesRef = useRef<Map<string, AgentState>>(new Map())
-  // Settings state
-  const [showSettings, setShowSettings] = useState(() => !sessionStorage.getItem('gateway-token'))
+  // Viewer mode — read-only, no auth required
+  const isViewer = useState(() => new URLSearchParams(window.location.search).get('mode') === 'viewer')[0]
+  const [linkCopied, setLinkCopied] = useState(false)
+
+  // Settings state — skip in viewer mode
+  const [showSettings, setShowSettings] = useState(() => isViewer ? false : !sessionStorage.getItem('gateway-token'))
   const [gatewayToken, setGatewayToken] = useState(() => sessionStorage.getItem('gateway-token') || '')
   const [gatewayUrl, setGatewayUrl] = useState(() => sessionStorage.getItem('gateway-url') || 'http://127.0.0.1:18789')
 
@@ -3368,10 +3378,69 @@ export default function App() {
       .catch(() => setSeatingLoaded(true))
   }, [])
 
-  // ── Live status polling from Gateway — discovers agents dynamically ──
   const discoveredRef = useRef(false)
+
+  // ── Viewer mode polling — public /api/agents endpoint ──
   useEffect(() => {
-    if (!gatewayToken) return // demo mode — use DEFAULT_AGENT_DEFS
+    if (!isViewer) return
+    let cancelled = false
+
+    async function pollViewerAgents() {
+      try {
+        const backendBase = window.location.port === '5173'
+          ? 'http://localhost:3001' : window.location.origin
+        const res = await fetch(`${backendBase}/api/agents`)
+        if (!res.ok || cancelled) return
+        const data = await res.json()
+        const agents: any[] = data.agents ?? []
+        if (agents.length === 0) return
+
+        const newDefs: AgentDef[] = agents.map((a: any, i: number) => ({
+          id: a.id ?? a.agentId ?? `agent-${i}`,
+          name: a.name ?? a.id ?? `Agent ${i}`,
+          role: a.role ?? 'Agent',
+          emoji: a.emoji ?? '🤖',
+          color: a.color ?? FALLBACK_COLORS[i % FALLBACK_COLORS.length],
+          frames: a.frames ?? 6,
+          state: (a.state ?? 'offline') as AgentState,
+          task: a.task ?? a.lastMessage ?? a.currentTask ?? '',
+          cubicleIndex: a.cubicleIndex ?? i,
+          lastUpdated: a.lastActivity ? new Date(a.lastActivity).getTime() : Date.now(),
+          sessionKey: a.sessionKey,
+        }))
+
+        setAgentDefs(newDefs)
+        if (!discoveredRef.current) {
+          discoveredRef.current = true
+          loadSpritesForAgents(newDefs)
+          agentsRef.current = buildAgents(newDefs)
+        } else {
+          // Update existing runtimes
+          for (const def of newDefs) {
+            const runtime = agentsRef.current.find(r => r.def.id === def.id)
+            if (runtime) {
+              const stateChanged = runtime.def.state !== def.state
+              Object.assign(runtime.def, def)
+              if (stateChanged) {
+                const { pos, room } = getTargetTileForAgent(def.id, def.state)
+                runtime.room = room
+                runtime.tx = pos[0]; runtime.ty = pos[1]
+              }
+            }
+          }
+        }
+        setAgentsLoaded(true)
+      } catch { /* viewer mode — silently retry */ }
+    }
+
+    pollViewerAgents()
+    const timer = setInterval(pollViewerAgents, 5000)
+    return () => { cancelled = true; clearInterval(timer) }
+  }, [isViewer])
+
+  // ── Live status polling from Gateway — discovers agents dynamically ──
+  useEffect(() => {
+    if (!gatewayToken || isViewer) return // demo mode or viewer mode
 
     async function pollGateway() {
       try {
@@ -4459,8 +4528,8 @@ export default function App() {
         ))}
       </div>
 
-      {/* Settings gear icon */}
-      <button
+      {/* Settings gear icon — hidden in viewer mode */}
+      {!isViewer && <button
         onClick={() => setShowSettings(true)}
         style={{
           position: 'absolute', top: 12, left: 12,
@@ -4473,7 +4542,7 @@ export default function App() {
         title={t.settings}
       >
         ⚙️
-      </button>
+      </button>}
 
       {/* Sound toggle button */}
       <button
@@ -4515,8 +4584,8 @@ export default function App() {
         📊
       </button>
 
-      {/* Edit mode toggle button */}
-      <button
+      {/* Edit mode toggle button — hidden in viewer mode */}
+      {!isViewer && <button
         onClick={() => setEditMode(m => !m)}
         style={{
           position: 'absolute', top: 12, left: 144,
@@ -4529,7 +4598,48 @@ export default function App() {
         }}
       >
         {t.designOffice}
-      </button>
+      </button>}
+
+      {/* Share button — generates viewer URL */}
+      {!isViewer && (
+        <button
+          onClick={() => {
+            const url = new URL(window.location.href)
+            url.searchParams.set('mode', 'viewer')
+            navigator.clipboard.writeText(url.toString()).then(() => {
+              setLinkCopied(true)
+              setTimeout(() => setLinkCopied(false), 2000)
+            })
+          }}
+          style={{
+            position: 'absolute', top: 12, left: 304, zIndex: 20,
+            background: linkCopied ? 'rgba(74,222,128,0.4)' : 'rgba(30,30,55,0.8)',
+            border: '2px solid #3a3a5c', borderRadius: 0,
+            width: 36, height: 36, fontSize: 16,
+            cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center',
+            color: linkCopied ? '#4ade80' : '#aaa',
+            fontFamily: '"Heebo", "Segoe UI", sans-serif',
+            boxShadow: 'inset -2px -2px 0 #0a0a1a, inset 2px 2px 0 #2a2a4a',
+            transition: 'background 0.3s, color 0.3s',
+          }}
+          title={linkCopied ? t.linkCopied : t.share}
+        >
+          {linkCopied ? '✓' : '🔗'}
+        </button>
+      )}
+
+      {/* Viewer mode badge */}
+      {isViewer && (
+        <div style={{
+          position: 'absolute', top: 12, right: 12, zIndex: 20,
+          background: 'rgba(74,106,255,0.3)', border: '1px solid rgba(74,106,255,0.5)',
+          borderRadius: 6, padding: '4px 12px',
+          color: '#aac', fontSize: 12,
+          fontFamily: '"Heebo", "Segoe UI", sans-serif',
+        }}>
+          {t.viewerMode}
+        </div>
+      )}
 
       {/* Export button with dropdown */}
       <div style={{ position: 'absolute', top: 12, left: 260, zIndex: 20 }}>
@@ -5150,15 +5260,20 @@ export default function App() {
             }}>✕</button>
           </div>
 
-          {/* Chat takes all remaining space */}
-          <ChatInput
+          {/* Chat takes all remaining space (hidden in viewer mode) */}
+          {!isViewer && <ChatInput
             agentId={selectedAgent.id}
             agentColor={STATE_META[selectedAgent.state].color}
             compact={isCompact}
             onSend={handleSendToAgent}
             onFetchHistory={handleFetchHistory}
             t={t}
-          />
+          />}
+          {isViewer && (
+            <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#555', fontSize: 13, padding: 20 }}>
+              👁️ {t.viewerMode}
+            </div>
+          )}
         </div>
       )}
     </div>
