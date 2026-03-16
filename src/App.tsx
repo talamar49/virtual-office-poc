@@ -73,6 +73,14 @@ const translations = {
     filterActive: 'פעילים',
     filterWorking: 'עובדים',
     filterOffline: 'לא מחוברים',
+    groupBy: 'קבוצות',
+    addGroup: '+ קבוצה חדשה',
+    ungrouped: 'ללא קבוצה',
+    editGroups: 'ערוך קבוצות',
+    doneEditing: 'סיום',
+    deleteGroup: 'מחק',
+    dragToGroup: 'גרור סוכן לקבוצה',
+    groupName: 'שם קבוצה',
   },
   en: {
     virtualOffice: 'Virtual Office',
@@ -144,6 +152,14 @@ const translations = {
     filterActive: 'Active',
     filterWorking: 'Working',
     filterOffline: 'Offline',
+    groupBy: 'Groups',
+    addGroup: '+ New Group',
+    ungrouped: 'Ungrouped',
+    editGroups: 'Edit Groups',
+    doneEditing: 'Done',
+    deleteGroup: 'Delete',
+    dragToGroup: 'Drag agent to group',
+    groupName: 'Group name',
   },
 } as const
 
@@ -3213,6 +3229,29 @@ export default function App() {
   const [showShortcuts, setShowShortcuts] = useState(false)
   const searchInputRef = useRef<HTMLInputElement>(null)
 
+  // Agent grouping — persistent custom groups
+  const [agentGroups, setAgentGroups] = useState<Record<string, string>>(() => {
+    try { return JSON.parse(localStorage.getItem('agent-groups') || '{}') } catch { return {} }
+  })
+  const [groupNames, setGroupNames] = useState<string[]>(() => {
+    try { return JSON.parse(localStorage.getItem('agent-group-names') || '[]') } catch { return [] }
+  })
+  const [groupByEnabled, setGroupByEnabled] = useState(() => localStorage.getItem('agent-group-by') === 'true')
+  const [editingGroups, setEditingGroups] = useState(false)
+  const [newGroupName, setNewGroupName] = useState('')
+  const [dragGroupAgent, setDragGroupAgent] = useState<string | null>(null)
+
+  // Persist groups
+  useEffect(() => {
+    localStorage.setItem('agent-groups', JSON.stringify(agentGroups))
+  }, [agentGroups])
+  useEffect(() => {
+    localStorage.setItem('agent-group-names', JSON.stringify(groupNames))
+  }, [groupNames])
+  useEffect(() => {
+    localStorage.setItem('agent-group-by', String(groupByEnabled))
+  }, [groupByEnabled])
+
   // Responsive breakpoint detection
   const [breakpoint, setBreakpoint] = useState<Breakpoint>(() => getBreakpoint(window.innerWidth))
   const isMobile = breakpoint === 'compact' || breakpoint === 'mobile'
@@ -4110,6 +4149,9 @@ export default function App() {
       // E → toggle edit mode
       if (e.key === 'e' || e.key === 'E') { setEditMode(m => !m); return }
 
+      // G → toggle group view
+      if (e.key === 'g' || e.key === 'G') { setGroupByEnabled(g => !g); return }
+
       // S → toggle sound
       if (e.key === 's' || e.key === 'S') {
         const nowEnabled = globalSound.toggle()
@@ -4594,12 +4636,26 @@ export default function App() {
             </button>
           ))}
           {!isCompact && (
+            <button
+              onClick={() => setGroupByEnabled(g => !g)}
+              style={{
+                padding: '2px 8px', borderRadius: 4, border: 'none',
+                background: groupByEnabled ? 'rgba(74,106,255,0.4)' : 'rgba(255,255,255,0.05)',
+                color: groupByEnabled ? '#fff' : '#888',
+                fontSize: 10, cursor: 'pointer',
+                fontFamily: '"Heebo", "Segoe UI", sans-serif',
+              }}
+            >
+              📁 {t.groupBy}
+            </button>
+          )}
+          {!isCompact && (
             <span style={{ fontSize: 10, color: '#555', marginRight: 'auto' }}>
               / {t.shortcutSearch} &nbsp; ? {t.shortcuts}
             </span>
           )}
         </div>
-        {/* Agent list row */}
+        {/* Agent list row — flat or grouped */}
         <div style={{
           display: 'flex', gap: isCompact ? 2 : isMobile ? 6 : 12,
           justifyContent: isMobile ? 'flex-start' : 'center',
@@ -4607,26 +4663,116 @@ export default function App() {
           overflowX: isMobile ? 'auto' : 'visible',
           WebkitOverflowScrolling: 'touch',
           padding: isCompact ? '3px 4px' : isMobile ? '4px 8px' : '6px 16px',
+          alignItems: 'center',
         }}>
-          {filteredAgents.map((a, i) => (
-            <div key={a.id} onClick={() => setSelectedId(s => s === a.id ? null : a.id)} style={{
-              display: 'flex', alignItems: 'center', gap: isCompact ? 2 : isMobile ? 3 : 5,
-              padding: isCompact ? '3px 3px' : isMobile ? '2px 5px' : '3px 8px',
-              borderRadius: 0, cursor: 'pointer', fontSize: isCompact ? 11 : isMobile ? 12 : 13,
-              background: selectedId === a.id ? 'rgba(100,100,200,0.3)' : 'transparent',
-              whiteSpace: 'nowrap', flexShrink: 0,
-              minHeight: isMobile ? 36 : undefined,
-            }}>
-              {!isCompact && <span style={{ fontSize: 9, color: '#555', marginLeft: 2 }}>{i + 1}</span>}
-              <span style={{
-                width: isCompact ? 6 : 7, height: isCompact ? 6 : 7, borderRadius: '50%',
-                background: STATE_META[a.state].color, display: 'inline-block',
-              }} />
-              <span style={{ color: '#ccc' }}>
-                {isCompact ? a.emoji : `${a.emoji} ${a.name}`}
-              </span>
-            </div>
-          ))}
+          {groupByEnabled && groupNames.length > 0 ? (
+            // Grouped view
+            <>
+              {[...groupNames, '__ungrouped__'].map(groupKey => {
+                const isUngrouped = groupKey === '__ungrouped__'
+                const label = isUngrouped ? t.ungrouped : groupKey
+                const groupAgents = filteredAgents.filter(a =>
+                  isUngrouped ? !agentGroups[a.id] || !groupNames.includes(agentGroups[a.id]) : agentGroups[a.id] === groupKey
+                )
+                if (groupAgents.length === 0 && isUngrouped) return null
+                return (
+                  <div
+                    key={groupKey}
+                    onDragOver={e => { e.preventDefault(); e.currentTarget.style.background = 'rgba(74,106,255,0.15)' }}
+                    onDragLeave={e => { e.currentTarget.style.background = 'transparent' }}
+                    onDrop={e => {
+                      e.preventDefault()
+                      e.currentTarget.style.background = 'transparent'
+                      if (dragGroupAgent) {
+                        setAgentGroups(prev => ({
+                          ...prev,
+                          [dragGroupAgent]: isUngrouped ? '' : groupKey,
+                        }))
+                        setDragGroupAgent(null)
+                      }
+                    }}
+                    style={{
+                      display: 'flex', alignItems: 'center', gap: 4,
+                      padding: '2px 6px',
+                      borderRadius: 4,
+                      border: '1px solid rgba(255,255,255,0.08)',
+                      background: 'transparent',
+                      transition: 'background 0.2s',
+                    }}
+                  >
+                    <span style={{ fontSize: 9, color: '#7B68EE', fontWeight: 600, marginLeft: 4 }}>
+                      {label}
+                    </span>
+                    <span style={{ color: 'rgba(255,255,255,0.15)' }}>│</span>
+                    {groupAgents.map((a, i) => (
+                      <div
+                        key={a.id}
+                        draggable
+                        onDragStart={() => setDragGroupAgent(a.id)}
+                        onDragEnd={() => setDragGroupAgent(null)}
+                        onClick={() => setSelectedId(s => s === a.id ? null : a.id)}
+                        style={{
+                          display: 'flex', alignItems: 'center', gap: 3,
+                          padding: '2px 6px', cursor: 'grab', fontSize: 12,
+                          background: selectedId === a.id ? 'rgba(100,100,200,0.3)'
+                            : dragGroupAgent === a.id ? 'rgba(74,106,255,0.2)' : 'transparent',
+                          borderRadius: 3, whiteSpace: 'nowrap',
+                          opacity: dragGroupAgent === a.id ? 0.5 : 1,
+                        }}
+                      >
+                        <span style={{
+                          width: 6, height: 6, borderRadius: '50%',
+                          background: STATE_META[a.state].color, display: 'inline-block',
+                        }} />
+                        <span style={{ color: '#ccc' }}>{a.emoji} {a.name}</span>
+                      </div>
+                    ))}
+                  </div>
+                )
+              })}
+              {/* Edit groups button */}
+              {!isCompact && (
+                <button
+                  onClick={() => setEditingGroups(e => !e)}
+                  style={{
+                    padding: '2px 6px', borderRadius: 4, border: 'none',
+                    background: 'rgba(255,255,255,0.05)', color: '#888',
+                    fontSize: 10, cursor: 'pointer',
+                  }}
+                >
+                  ✏️
+                </button>
+              )}
+            </>
+          ) : (
+            // Flat view (original)
+            filteredAgents.map((a, i) => (
+              <div
+                key={a.id}
+                draggable={groupByEnabled}
+                onDragStart={() => groupByEnabled && setDragGroupAgent(a.id)}
+                onDragEnd={() => setDragGroupAgent(null)}
+                onClick={() => setSelectedId(s => s === a.id ? null : a.id)}
+                style={{
+                  display: 'flex', alignItems: 'center', gap: isCompact ? 2 : isMobile ? 3 : 5,
+                  padding: isCompact ? '3px 3px' : isMobile ? '2px 5px' : '3px 8px',
+                  borderRadius: 0, cursor: 'pointer', fontSize: isCompact ? 11 : isMobile ? 12 : 13,
+                  background: selectedId === a.id ? 'rgba(100,100,200,0.3)' : 'transparent',
+                  whiteSpace: 'nowrap', flexShrink: 0,
+                  minHeight: isMobile ? 36 : undefined,
+                }}
+              >
+                {!isCompact && <span style={{ fontSize: 9, color: '#555', marginLeft: 2 }}>{i + 1}</span>}
+                <span style={{
+                  width: isCompact ? 6 : 7, height: isCompact ? 6 : 7, borderRadius: '50%',
+                  background: STATE_META[a.state].color, display: 'inline-block',
+                }} />
+                <span style={{ color: '#ccc' }}>
+                  {isCompact ? a.emoji : `${a.emoji} ${a.name}`}
+                </span>
+              </div>
+            ))
+          )}
           {filteredAgents.length === 0 && (
             <span style={{ color: '#666', fontSize: 12, padding: 4 }}>{t.noResults}</span>
           )}
@@ -4659,6 +4805,7 @@ export default function App() {
               ['D', t.shortcutDashboard],
               ['E', t.shortcutEdit],
               ['S', t.shortcutSound],
+              ['G', t.groupBy],
               ['J / →', t.shortcutNext],
               ['K / ←', t.shortcutPrev],
               ['1-9', t.agents],
@@ -4688,6 +4835,146 @@ export default function App() {
                 }}
               >
                 {t.shortcutClose} (Esc)
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Group editing modal */}
+      {editingGroups && (
+        <div
+          onClick={() => setEditingGroups(false)}
+          style={{
+            position: 'absolute', inset: 0, background: 'rgba(0,0,0,0.6)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            zIndex: 100, fontFamily: '"Heebo", sans-serif',
+          }}
+        >
+          <div
+            onClick={e => e.stopPropagation()}
+            style={{
+              background: '#1a1d35', border: '2px solid #3a3a5c',
+              borderRadius: 12, padding: 24, width: 360,
+              color: '#e0e0e0', direction: 'rtl',
+            }}
+          >
+            <h3 style={{ margin: '0 0 16px', fontSize: 16, textAlign: 'center' }}>
+              📁 {t.editGroups}
+            </h3>
+
+            {/* Existing groups */}
+            {groupNames.map(name => (
+              <div key={name} style={{
+                display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                padding: '8px 0', borderBottom: '1px solid rgba(255,255,255,0.06)',
+              }}>
+                <span style={{ fontSize: 14 }}>{name}</span>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <span style={{ fontSize: 11, color: '#888' }}>
+                    {agentDefs.filter(a => agentGroups[a.id] === name).length} {t.agents}
+                  </span>
+                  <button
+                    onClick={() => {
+                      setGroupNames(prev => prev.filter(g => g !== name))
+                      setAgentGroups(prev => {
+                        const next = { ...prev }
+                        for (const k of Object.keys(next)) {
+                          if (next[k] === name) next[k] = ''
+                        }
+                        return next
+                      })
+                    }}
+                    style={{
+                      background: 'rgba(255,80,80,0.2)', border: '1px solid rgba(255,80,80,0.3)',
+                      borderRadius: 4, padding: '2px 8px', color: '#f88',
+                      fontSize: 11, cursor: 'pointer',
+                    }}
+                  >
+                    {t.deleteGroup}
+                  </button>
+                </div>
+              </div>
+            ))}
+
+            {/* Add new group */}
+            <div style={{ display: 'flex', gap: 8, marginTop: 16 }}>
+              <input
+                type="text"
+                value={newGroupName}
+                onChange={e => setNewGroupName(e.target.value)}
+                onKeyDown={e => {
+                  if (e.key === 'Enter' && newGroupName.trim()) {
+                    const name = newGroupName.trim()
+                    if (!groupNames.includes(name)) {
+                      setGroupNames(prev => [...prev, name])
+                    }
+                    setNewGroupName('')
+                  }
+                }}
+                placeholder={t.groupName}
+                style={{
+                  flex: 1, height: 32, padding: '0 10px',
+                  borderRadius: 6, border: '1px solid rgba(255,255,255,0.15)',
+                  background: 'rgba(255,255,255,0.05)', color: '#eee',
+                  fontSize: 13, outline: 'none', direction: 'rtl',
+                }}
+              />
+              <button
+                onClick={() => {
+                  const name = newGroupName.trim()
+                  if (name && !groupNames.includes(name)) {
+                    setGroupNames(prev => [...prev, name])
+                    setNewGroupName('')
+                  }
+                }}
+                style={{
+                  background: 'rgba(74,106,255,0.3)', border: '1px solid rgba(74,106,255,0.5)',
+                  borderRadius: 6, padding: '0 14px', color: '#fff',
+                  fontSize: 12, cursor: 'pointer',
+                }}
+              >
+                {t.addGroup}
+              </button>
+            </div>
+
+            {/* Agent assignment */}
+            {groupNames.length > 0 && (
+              <div style={{ marginTop: 16, borderTop: '1px solid rgba(255,255,255,0.08)', paddingTop: 12 }}>
+                <div style={{ fontSize: 12, color: '#888', marginBottom: 8 }}>{t.dragToGroup}</div>
+                {agentDefs.map(a => (
+                  <div key={a.id} style={{
+                    display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                    padding: '4px 0', fontSize: 13,
+                  }}>
+                    <span>{a.emoji} {a.name}</span>
+                    <select
+                      value={agentGroups[a.id] || ''}
+                      onChange={e => setAgentGroups(prev => ({ ...prev, [a.id]: e.target.value }))}
+                      style={{
+                        background: 'rgba(255,255,255,0.08)', border: '1px solid rgba(255,255,255,0.15)',
+                        borderRadius: 4, padding: '2px 6px', color: '#ccc',
+                        fontSize: 11, direction: 'rtl',
+                      }}
+                    >
+                      <option value="">{t.ungrouped}</option>
+                      {groupNames.map(g => <option key={g} value={g}>{g}</option>)}
+                    </select>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            <div style={{ textAlign: 'center', marginTop: 16 }}>
+              <button
+                onClick={() => setEditingGroups(false)}
+                style={{
+                  background: 'rgba(74,106,255,0.3)', border: '1px solid rgba(74,106,255,0.5)',
+                  borderRadius: 8, padding: '6px 20px', color: '#fff',
+                  fontSize: 13, cursor: 'pointer', fontFamily: '"Heebo", sans-serif',
+                }}
+              >
+                {t.doneEditing}
               </button>
             </div>
           </div>
