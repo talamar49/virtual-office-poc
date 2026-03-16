@@ -7,6 +7,7 @@
 
 import { fetchSessions } from './gateway-client.js';
 import { getAgentMeta, getAllAgentIds, fromGatewayAgentId, type Zone } from '../config/agents.js';
+import { recordActivity } from './activity-log.js';
 
 // --- Types ---
 
@@ -217,6 +218,37 @@ async function pollCycle(): Promise<void> {
 
       const diff = computeDiffs(oldStatus, newStatus);
       if (diff) {
+        const meta = getAgentMeta(agentId);
+
+        // Log state transitions
+        if (diff.state && diff.state !== oldStatus.state) {
+          const isError = diff.state === 'error';
+          const isRecovery = oldStatus.state === 'error' && diff.state !== 'error';
+
+          recordActivity({
+            agentId,
+            agentName: meta.name,
+            agentEmoji: meta.emoji,
+            type: isRecovery ? 'recovery' : isError ? 'error' : 'state-change',
+            fromState: oldStatus.state,
+            toState: diff.state,
+            timestamp: Date.now(),
+          });
+        }
+
+        // Log zone transitions
+        if (diff.zone && diff.zone !== oldStatus.zone) {
+          recordActivity({
+            agentId,
+            agentName: meta.name,
+            agentEmoji: meta.emoji,
+            type: 'zone-change',
+            fromZone: oldStatus.zone,
+            toZone: diff.zone,
+            timestamp: Date.now(),
+          });
+        }
+
         updates.push({
           agentId,
           changes: diff,

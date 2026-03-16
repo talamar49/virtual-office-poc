@@ -5,8 +5,10 @@
 import { Router } from 'express';
 import { getFullState, getAgentStatus, getPollerStats } from '../services/status-poller.js';
 import { checkGatewayHealth, getCircuitStatus } from '../services/gateway-client.js';
-import { getClientCount } from '../ws/handler.js';
+import { getClientCount, getWsStats } from '../ws/handler.js';
 import { AGENT_REGISTRY, getAgentMeta } from '../config/agents.js';
+import { getRecentActivity, getAgentActivity, getActivitySince, getActivityStats } from '../services/activity-log.js';
+import { getRateLimitStats } from '../middleware/rate-limit.js';
 
 export const apiRouter: ReturnType<typeof Router> = Router();
 
@@ -28,6 +30,9 @@ apiRouter.get('/health', async (_req, res) => {
         circuit: getCircuitStatus(),
       },
       poller,
+      ws: getWsStats(),
+      rateLimits: getRateLimitStats(),
+      activityLog: getActivityStats(),
     });
   } catch (err) {
     res.status(503).json({ status: 'error', error: (err as Error).message });
@@ -69,5 +74,49 @@ apiRouter.get('/agents/:id', (req, res) => {
       tokenUsage: 0,
       sessionKey: null,
     },
+    recentActivity: getAgentActivity(id, 20),
   });
+});
+
+/**
+ * GET /api/activity
+ * Global activity feed. Query params: ?limit=50&since=<timestamp>
+ */
+apiRouter.get('/activity', (req, res) => {
+  const limit = Math.min(parseInt(req.query.limit as string) || 50, 200);
+  const since = parseInt(req.query.since as string) || 0;
+
+  const events = since > 0
+    ? getActivitySince(since, limit)
+    : getRecentActivity(limit);
+
+  res.json({
+    count: events.length,
+    events,
+    stats: getActivityStats(),
+  });
+});
+
+/**
+ * GET /api/activity/:agentId
+ * Activity for a specific agent. Query params: ?limit=50
+ */
+apiRouter.get('/activity/:agentId', (req, res) => {
+  const { agentId } = req.params;
+  const limit = Math.min(parseInt(req.query.limit as string) || 50, 200);
+
+  const events = getAgentActivity(agentId, limit);
+  res.json({
+    agentId,
+    count: events.length,
+    events,
+  });
+});
+
+/**
+ * GET /api/ws-stats
+ * WebSocket connection stats.
+ */
+apiRouter.get('/ws-stats', (_req, res) => {
+  res.json(getWsStats());
 });

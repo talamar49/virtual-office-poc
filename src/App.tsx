@@ -59,6 +59,20 @@ const translations = {
     backToOffice: 'חזור למשרד',
     dashboard: 'Dashboard',
     taskCompleted: 'סיים משימה',
+    searchPlaceholder: '🔍 חפש סוכן...',
+    shortcuts: 'קיצורי מקלדת',
+    shortcutSearch: 'חיפוש סוכן',
+    shortcutDashboard: 'תצוגת Dashboard',
+    shortcutEdit: 'מצב עריכה',
+    shortcutSound: 'סאונד',
+    shortcutClose: 'סגור',
+    shortcutNext: 'סוכן הבא',
+    shortcutPrev: 'סוכן הקודם',
+    noResults: 'לא נמצאו סוכנים',
+    filterAll: 'הכל',
+    filterActive: 'פעילים',
+    filterWorking: 'עובדים',
+    filterOffline: 'לא מחוברים',
   },
   en: {
     virtualOffice: 'Virtual Office',
@@ -116,6 +130,20 @@ const translations = {
     backToOffice: 'Back to Office',
     dashboard: 'Dashboard',
     taskCompleted: 'Task completed',
+    searchPlaceholder: '🔍 Search agent...',
+    shortcuts: 'Keyboard Shortcuts',
+    shortcutSearch: 'Search agent',
+    shortcutDashboard: 'Dashboard view',
+    shortcutEdit: 'Edit mode',
+    shortcutSound: 'Sound',
+    shortcutClose: 'Close',
+    shortcutNext: 'Next agent',
+    shortcutPrev: 'Previous agent',
+    noResults: 'No agents found',
+    filterAll: 'All',
+    filterActive: 'Active',
+    filterWorking: 'Working',
+    filterOffline: 'Offline',
   },
 } as const
 
@@ -1410,7 +1438,7 @@ function buildAgents(defs: AgentDef[]): AgentRuntime[] {
 }
 
 // ── Generic sprite bank ──
-const GENERIC_SPRITE_COUNT = 11
+const GENERIC_SPRITE_COUNT = 31  // v8: generic-1..11 (legacy) + generic-12..31 (new)
 const genericSpriteImages: HTMLImageElement[] = []
 let genericsLoaded = false
 
@@ -1422,7 +1450,7 @@ function loadGenericSprites() {
     img.src = `/assets/characters/generic-${i}-idle.png`
     genericSpriteImages.push(img)
 
-    // Also load generic sitting sprites
+    // Sitting sprites
     const workImg = new Image()
     workImg.src = `/assets/characters/generic-${i}-sitting-work.png`
     workImg.onload = () => { sittingFrameCounts[`generic-${i}-work`] = Math.max(1, Math.floor(workImg.naturalWidth / SPRITE_SIZE)) }
@@ -1432,6 +1460,23 @@ function loadGenericSprites() {
     loungeImg.src = `/assets/characters/generic-${i}-sitting-lounge.png`
     loungeImg.onload = () => { sittingFrameCounts[`generic-${i}-lounge`] = Math.max(1, Math.floor(loungeImg.naturalWidth / SPRITE_SIZE)) }
     sittingSprites[`generic-${i}-lounge`] = loungeImg
+
+    // Walk + shadow sprites (v8 generics have these)
+    const walkImg = new Image()
+    walkImg.src = `/assets/characters/generic-${i}-walk.png`
+    walkImg.onload = () => {
+      if (walkImg.naturalWidth > 0) {
+        walkSprites[`generic-${i}`] = walkImg
+        walkFrameCounts[`generic-${i}`] = Math.max(1, Math.floor(walkImg.naturalWidth / SPRITE_SIZE))
+        walkHasSwRow[`generic-${i}`] = walkImg.naturalHeight >= SPRITE_SIZE * 2
+      }
+    }
+    walkImg.onerror = () => {}
+
+    const shadowImg = new Image()
+    shadowImg.src = `/assets/characters/generic-${i}-shadow.png`
+    shadowImg.onerror = () => {}
+    shadowSprites[`generic-${i}`] = shadowImg
   }
 }
 
@@ -2650,6 +2695,67 @@ function drawScene(
     ctx.fillStyle = 'rgba(150,150,255,0.6)'
     ctx.fillText(labels.editMode || 'Edit Mode', w / 2, 50)
   }
+
+  // ── Mini-map — bird's eye view in bottom-left corner ──
+  const mmW = Math.min(160, w * 0.2)  // 20% of canvas width, max 160px
+  const mmH = mmW * (MAP_ROWS / MAP_COLS)
+  const mmX = 8
+  const mmY = h - mmH - 8
+  const mmTileW = mmW / MAP_COLS
+  const mmTileH = mmH / MAP_ROWS
+
+  // Background
+  ctx.fillStyle = 'rgba(10, 12, 18, 0.85)'
+  ctx.beginPath()
+  ctx.roundRect(mmX - 2, mmY - 2, mmW + 4, mmH + 4, 4)
+  ctx.fill()
+  ctx.strokeStyle = 'rgba(255,255,255,0.15)'
+  ctx.lineWidth = 1
+  ctx.stroke()
+
+  // Room tiles
+  for (const room of ROOMS) {
+    const [c1] = FLOOR_STYLES[room.floorType] ?? FLOOR_STYLES[0]
+    ctx.fillStyle = c1
+    ctx.fillRect(
+      mmX + room.startCol * mmTileW,
+      mmY + room.startRow * mmTileH,
+      (room.endCol - room.startCol + 1) * mmTileW,
+      (room.endRow - room.startRow + 1) * mmTileH,
+    )
+  }
+
+  // Agent dots
+  for (const agent of agents) {
+    const stateColor = STATE_META[agent.def.state]?.color || '#888'
+    const dotX = mmX + agent.x * mmTileW
+    const dotY = mmY + agent.y * mmTileH
+    ctx.beginPath()
+    ctx.arc(dotX, dotY, Math.max(2, mmTileW * 0.4), 0, Math.PI * 2)
+    ctx.fillStyle = agent.def.state === 'offline' ? 'rgba(100,100,100,0.4)' : stateColor
+    ctx.fill()
+  }
+
+  // Viewport indicator — show what's currently visible
+  const { isoW, isoH } = getIsoBounds()
+  const vpLeft = (-panX) / isoW * MAP_COLS
+  const vpTop = (-panY) / isoH * MAP_ROWS
+  const vpCols = (w / zoom) / isoW * MAP_COLS
+  const vpRows = (h / zoom) / isoH * MAP_ROWS
+  ctx.strokeStyle = 'rgba(255,255,255,0.5)'
+  ctx.lineWidth = 1
+  ctx.strokeRect(
+    mmX + Math.max(0, vpLeft) * mmTileW,
+    mmY + Math.max(0, vpTop) * mmTileH,
+    Math.min(MAP_COLS, vpCols) * mmTileW,
+    Math.min(MAP_ROWS, vpRows) * mmTileH,
+  )
+
+  // Label
+  ctx.font = '8px "Heebo", sans-serif'
+  ctx.fillStyle = 'rgba(255,255,255,0.4)'
+  ctx.textAlign = 'left'
+  ctx.fillText(`${currentOfficeSize} · ${agents.length}/${activeLayout.maxAgents}`, mmX + 2, mmY - 4)
 }
 
 // ── Hit testing ──
@@ -3034,6 +3140,10 @@ export default function App() {
 
   // Dashboard mode toggle
   const [dashboardMode, setDashboardMode] = useState(false)
+  const [searchQuery, setSearchQuery] = useState('')
+  const [statusFilter, setStatusFilter] = useState<'all' | AgentState>('all')
+  const [showShortcuts, setShowShortcuts] = useState(false)
+  const searchInputRef = useRef<HTMLInputElement>(null)
 
   // Responsive breakpoint detection
   const [breakpoint, setBreakpoint] = useState<Breakpoint>(() => getBreakpoint(window.innerWidth))
@@ -3885,18 +3995,92 @@ export default function App() {
 
   
 
-  // Escape key handler
+  // Filtered agents for search/filter
+  const filteredAgents = agentDefs.filter(a => {
+    if (statusFilter !== 'all' && a.state !== statusFilter) return false
+    if (!searchQuery) return true
+    const q = searchQuery.toLowerCase()
+    return a.name.toLowerCase().includes(q)
+      || a.id.toLowerCase().includes(q)
+      || a.role.toLowerCase().includes(q)
+      || a.task.toLowerCase().includes(q)
+  })
+
+  // Global keyboard shortcuts
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
+      const target = e.target as HTMLElement
+      const isInput = target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable
+
+      // Escape always works
       if (e.key === 'Escape') {
+        if (showShortcuts) { setShowShortcuts(false); return }
+        if (searchQuery) { setSearchQuery(''); setStatusFilter('all'); return }
+        if (selectedId) { setSelectedId(null); return }
         setEditMode(false)
         setPlacementType(null)
         setSelectedDecoId(null)
+        return
+      }
+
+      // Don't intercept when typing in inputs (except Escape above)
+      if (isInput) return
+
+      // / or Ctrl+K → focus search
+      if (e.key === '/' || (e.key === 'k' && (e.metaKey || e.ctrlKey))) {
+        e.preventDefault()
+        searchInputRef.current?.focus()
+        return
+      }
+
+      // ? → show shortcuts
+      if (e.key === '?') { setShowShortcuts(s => !s); return }
+
+      // D → toggle dashboard
+      if (e.key === 'd' || e.key === 'D') { setDashboardMode(m => !m); return }
+
+      // E → toggle edit mode
+      if (e.key === 'e' || e.key === 'E') { setEditMode(m => !m); return }
+
+      // S → toggle sound
+      if (e.key === 's' || e.key === 'S') {
+        const nowEnabled = globalSound.toggle()
+        setSoundEnabled(nowEnabled)
+        return
+      }
+
+      // J/K or ←/→ → navigate agents
+      if (e.key === 'j' || e.key === 'J' || e.key === 'ArrowRight') {
+        e.preventDefault()
+        const list = filteredAgents
+        if (list.length === 0) return
+        const curIdx = selectedId ? list.findIndex(a => a.id === selectedId) : -1
+        const nextIdx = (curIdx + 1) % list.length
+        setSelectedId(list[nextIdx].id)
+        return
+      }
+      if (e.key === 'k' || e.key === 'K' || e.key === 'ArrowLeft') {
+        e.preventDefault()
+        const list = filteredAgents
+        if (list.length === 0) return
+        const curIdx = selectedId ? list.findIndex(a => a.id === selectedId) : 0
+        const prevIdx = (curIdx - 1 + list.length) % list.length
+        setSelectedId(list[prevIdx].id)
+        return
+      }
+
+      // 1-9 → select agent by index
+      if (e.key >= '1' && e.key <= '9') {
+        const idx = parseInt(e.key) - 1
+        if (idx < filteredAgents.length) {
+          setSelectedId(filteredAgents[idx].id)
+        }
+        return
       }
     }
     window.addEventListener('keydown', handler)
     return () => window.removeEventListener('keydown', handler)
-  }, [])
+  }, [selectedId, searchQuery, showShortcuts, filteredAgents, statusFilter])
 
   // Resolve backend base URL (dev vs prod)
   const getBackendBase = useCallback(() => {
@@ -4262,7 +4446,7 @@ export default function App() {
           alignContent: 'flex-start', overflowY: 'auto',
           fontFamily: '"Heebo", "Segoe UI", sans-serif',
         }}>
-          {agentDefs.map(a => (
+          {filteredAgents.map(a => (
             <div key={a.id} onClick={() => setSelectedId(prev => prev === a.id ? null : a.id)} style={{
               background: selectedId === a.id ? 'rgba(74,106,255,0.3)' : 'rgba(30,30,60,0.8)',
               border: '2px solid #3a3a5c', padding: 12, cursor: 'pointer',
@@ -4276,6 +4460,9 @@ export default function App() {
               </div>
             </div>
           ))}
+          {filteredAgents.length === 0 && (
+            <div style={{ color: '#666', fontSize: 14, padding: 20 }}>{t.noResults}</div>
+          )}
         </div>
       )}
 
