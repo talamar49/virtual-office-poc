@@ -1,7 +1,7 @@
 /**
  * Chat panel tests — open, close, minimize (mobile).
  */
-import { test, expect } from '@playwright/test'
+import { test, expect } from './fixtures'
 
 test.describe('Chat Panel', () => {
   test.beforeEach(async ({ page }) => {

@@ -20,8 +20,6 @@ export default defineConfig({
     baseURL: 'http://localhost:18000',
     trace: 'on-first-retry',
     screenshot: 'only-on-failure',
-    // Inject gateway token via localStorage before each test
-    storageState: 'e2e/auth.json',
   },
 
   projects: [

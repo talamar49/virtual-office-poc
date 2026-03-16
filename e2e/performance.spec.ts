@@ -2,7 +2,8 @@
  * Performance benchmarks — load time, paint, memory.
  * These run on Chromium only (CDP needed for detailed metrics).
  */
-import { test, expect, chromium } from '@playwright/test'
+import { test, expect } from './fixtures'
+import { chromium } from '@playwright/test'
 
 test.describe('Performance', () => {
   // FCP / LCP benchmarks

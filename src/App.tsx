@@ -1,4 +1,5 @@
 import { useRef, useEffect, useState, useCallback } from 'react'
+import { jsPDF } from 'jspdf'
 
 // ── i18n ──
 type Lang = 'he' | 'en'
@@ -81,6 +82,9 @@ const translations = {
     deleteGroup: 'מחק',
     dragToGroup: 'גרור סוכן לקבוצה',
     groupName: 'שם קבוצה',
+    exportImage: 'ייצוא PNG',
+    exportPdf: 'ייצוא PDF',
+    exportMenu: '📸 ייצוא',
   },
   en: {
     virtualOffice: 'Virtual Office',
@@ -160,6 +164,9 @@ const translations = {
     deleteGroup: 'Delete',
     dragToGroup: 'Drag agent to group',
     groupName: 'Group name',
+    exportImage: 'Export PNG',
+    exportPdf: 'Export PDF',
+    exportMenu: '📸 Export',
   },
 } as const
 
@@ -3240,6 +3247,7 @@ export default function App() {
   const [editingGroups, setEditingGroups] = useState(false)
   const [newGroupName, setNewGroupName] = useState('')
   const [dragGroupAgent, setDragGroupAgent] = useState<string | null>(null)
+  const [showExportMenu, setShowExportMenu] = useState(false)
 
   // Persist groups
   useEffect(() => {
@@ -4121,6 +4129,7 @@ export default function App() {
 
       // Escape always works
       if (e.key === 'Escape') {
+        if (showExportMenu) { setShowExportMenu(false); return }
         if (showShortcuts) { setShowShortcuts(false); return }
         if (searchQuery) { setSearchQuery(''); setStatusFilter('all'); return }
         if (selectedId) { setSelectedId(null); return }
@@ -4274,6 +4283,42 @@ export default function App() {
       .filter((m: ChatMessage) => m.text.length > 0)
       .filter(isVisibleMessage)
   }, [gatewayToken, gatewayUrl, getBackendBase])
+
+  // Export office as PNG
+  const handleExportPng = useCallback(() => {
+    const canvas = canvasRef.current
+    if (!canvas) return
+    const dataUrl = canvas.toDataURL('image/png')
+    const link = document.createElement('a')
+    link.download = `virtual-office-${new Date().toISOString().slice(0, 10)}.png`
+    link.href = dataUrl
+    link.click()
+    setShowExportMenu(false)
+  }, [])
+
+  // Export office as PDF
+  const handleExportPdf = useCallback(() => {
+    const canvas = canvasRef.current
+    if (!canvas) return
+    const dataUrl = canvas.toDataURL('image/png')
+    const w = canvas.width
+    const h = canvas.height
+    // Landscape or portrait based on aspect ratio
+    const orientation = w > h ? 'landscape' : 'portrait'
+    const pdf = new jsPDF({ orientation, unit: 'px', format: [w, h] })
+    pdf.addImage(dataUrl, 'PNG', 0, 0, w, h)
+
+    // Add agent status summary below image
+    const fontSize = Math.max(12, Math.min(16, w / 60))
+    pdf.setFontSize(fontSize)
+    const statusY = h - fontSize * 2
+    const summary = agentDefs.map(a => `${a.emoji} ${a.name}: ${a.state}${a.task ? ` — ${a.task}` : ''}`).join('  |  ')
+    pdf.setTextColor(200, 200, 200)
+    pdf.text(summary, w / 2, statusY, { align: 'center', maxWidth: w - 40 })
+
+    pdf.save(`virtual-office-${new Date().toISOString().slice(0, 10)}.pdf`)
+    setShowExportMenu(false)
+  }, [agentDefs])
 
   const selectedAgent = agentDefs.find(a => a.id === selectedId) ?? null
 
@@ -4464,6 +4509,61 @@ export default function App() {
       >
         {t.designOffice}
       </button>
+
+      {/* Export button with dropdown */}
+      <div style={{ position: 'absolute', top: 12, left: 260, zIndex: 20 }}>
+        <button
+          onClick={() => setShowExportMenu(m => !m)}
+          style={{
+            background: showExportMenu ? 'rgba(74,106,255,0.5)' : 'rgba(30,30,55,0.8)',
+            border: '2px solid #3a3a5c', borderRadius: 0,
+            width: 36, height: 36, fontSize: 16,
+            cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center',
+            color: showExportMenu ? '#fff' : '#aaa',
+            fontFamily: '"Heebo", "Segoe UI", sans-serif',
+            boxShadow: 'inset -2px -2px 0 #0a0a1a, inset 2px 2px 0 #2a2a4a',
+          }}
+          title={t.exportMenu}
+        >
+          📸
+        </button>
+        {showExportMenu && (
+          <div style={{
+            position: 'absolute', top: 40, left: 0,
+            background: 'rgba(30,30,55,0.95)', border: '2px solid #3a3a5c',
+            borderRadius: 0, padding: 4, minWidth: 140,
+            boxShadow: '0 8px 24px rgba(0,0,0,0.5)',
+            fontFamily: '"Heebo", "Segoe UI", sans-serif',
+          }}>
+            <button
+              onClick={handleExportPng}
+              style={{
+                display: 'block', width: '100%', padding: '8px 12px',
+                background: 'transparent', border: 'none', color: '#ccc',
+                fontSize: 12, cursor: 'pointer', textAlign: 'right',
+                fontFamily: '"Heebo", "Segoe UI", sans-serif',
+              }}
+              onMouseEnter={e => { e.currentTarget.style.background = 'rgba(74,106,255,0.2)' }}
+              onMouseLeave={e => { e.currentTarget.style.background = 'transparent' }}
+            >
+              🖼️ {t.exportImage}
+            </button>
+            <button
+              onClick={handleExportPdf}
+              style={{
+                display: 'block', width: '100%', padding: '8px 12px',
+                background: 'transparent', border: 'none', color: '#ccc',
+                fontSize: 12, cursor: 'pointer', textAlign: 'right',
+                fontFamily: '"Heebo", "Segoe UI", sans-serif',
+              }}
+              onMouseEnter={e => { e.currentTarget.style.background = 'rgba(74,106,255,0.2)' }}
+              onMouseLeave={e => { e.currentTarget.style.background = 'transparent' }}
+            >
+              📄 {t.exportPdf}
+            </button>
+          </div>
+        )}
+      </div>
 
       {/* Edit mode toolbar */}
       {editMode && (
