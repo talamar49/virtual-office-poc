@@ -45,9 +45,15 @@ app.use(express.json());
 import { transcribeRouter } from './routes/transcribe.js';
 import { seatingRouter } from './routes/seating.js';
 import { apiLimiter, proxyLimiter } from './middleware/rate-limit.js';
+import { chatRouter } from './routes/chat.js';
+import { webhookRouter } from './routes/webhooks.js';
+import { metricsMiddleware } from './services/metrics.js';
+app.use(metricsMiddleware);
 app.use('/api/proxy', proxyLimiter, proxyRouter);
 app.use('/api/transcribe', transcribeRouter);
 app.use('/api/seating', seatingRouter);
+app.use('/api/chat', chatRouter);
+app.use('/api/webhooks', webhookRouter);
 app.use('/api', apiLimiter, apiRouter);
 
 // Serve frontend static files (production)

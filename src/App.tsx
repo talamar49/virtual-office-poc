@@ -2452,6 +2452,7 @@ function drawScene(
   editState?: EditState,
   allAgentDefs?: AgentDef[],
   i18nLabels?: I18nLabels,
+  isNightMode?: boolean,
 ) {
   const f = fonts ?? getCanvasFontSizes('desktop')
   const decos = decorations ?? DEFAULT_DECORATIONS.map(d => ({ ...d, _id: 0 }))
@@ -2874,6 +2875,44 @@ function drawScene(
   ctx.fillStyle = 'rgba(255,255,255,0.4)'
   ctx.textAlign = 'left'
   ctx.fillText(`${currentOfficeSize} · ${agents.length}/${activeLayout.maxAgents}`, mmX + 2, mmY - 4)
+
+  // ── Night mode overlay ──
+  if (isNightMode) {
+    // Dark blue-ish overlay simulating night lighting
+    ctx.save()
+    ctx.globalCompositeOperation = 'multiply'
+    ctx.fillStyle = '#1a1a3a'
+    ctx.fillRect(0, 0, w, h)
+    ctx.restore()
+
+    // Warm light circles around working agents (desk lamps)
+    ctx.save()
+    ctx.globalCompositeOperation = 'screen'
+    for (const agent of agents) {
+      if (agent.def.state === 'offline') continue
+      const [ax, ay] = toIso(agent.x, agent.y)
+      const sx = ox + ax
+      const sy = oy + ay - SPRITE_DISPLAY / 2
+      const radius = agent.def.state === 'working' || agent.def.state === 'active' ? 45 : 25
+      const gradient = ctx.createRadialGradient(sx, sy, 0, sx, sy, radius)
+      if (agent.def.state === 'working' || agent.def.state === 'active') {
+        gradient.addColorStop(0, 'rgba(255, 220, 150, 0.25)')
+        gradient.addColorStop(1, 'rgba(255, 220, 150, 0)')
+      } else {
+        gradient.addColorStop(0, 'rgba(200, 200, 255, 0.12)')
+        gradient.addColorStop(1, 'rgba(200, 200, 255, 0)')
+      }
+      ctx.fillStyle = gradient
+      ctx.fillRect(sx - radius, sy - radius, radius * 2, radius * 2)
+    }
+    ctx.restore()
+
+    // 🌙 moon icon top-right
+    ctx.font = '16px sans-serif'
+    ctx.fillStyle = 'rgba(255,255,200,0.4)'
+    ctx.textAlign = 'right'
+    ctx.fillText('🌙', w - 8, 20)
+  }
 }
 
 // ── Hit testing ──
@@ -3183,6 +3222,19 @@ export default function App() {
       return next
     })
   }, [])
+  // Night mode — darker ambient lighting
+  const [nightMode, setNightMode] = useState(() => localStorage.getItem('office-night') === 'true')
+  const nightModeRef = useRef(nightMode)
+  nightModeRef.current = nightMode
+  const toggleNightMode = useCallback(() => {
+    setNightMode(prev => {
+      const next = !prev
+      localStorage.setItem('office-night', String(next))
+      nightModeRef.current = next
+      return next
+    })
+  }, [])
+
   const [agentDefs, setAgentDefs] = useState<AgentDef[]>(DEFAULT_AGENT_DEFS)
   const agentDefsRef = useRef<AgentDef[]>(agentDefs)
   agentDefsRef.current = agentDefs
@@ -3797,7 +3849,7 @@ export default function App() {
           : null,
       }
       const tr = i18nRef.current
-      drawScene(offCtx, w, h, t, agents, hoverAgentIdRef.current, selectedIdRef.current, panRef.current.x, panRef.current.y, fonts, decorationsRef.current, editState, agentDefsRef.current, { loungeZone: tr.loungeZone, workZone: tr.workZone, errorZone: tr.errorZone, virtualOffice: `🏢 ${tr.virtualOffice}`, active: tr.active, working: tr.working, idle: tr.idle, offline: tr.offline, error: tr.error, editMode: tr.editMode })
+      drawScene(offCtx, w, h, t, agents, hoverAgentIdRef.current, selectedIdRef.current, panRef.current.x, panRef.current.y, fonts, decorationsRef.current, editState, agentDefsRef.current, { loungeZone: tr.loungeZone, workZone: tr.workZone, errorZone: tr.errorZone, virtualOffice: `🏢 ${tr.virtualOffice}`, active: tr.active, working: tr.working, idle: tr.idle, offline: tr.offline, error: tr.error, editMode: tr.editMode }, nightModeRef.current)
 
       offCtx.restore()
 
@@ -4584,11 +4636,29 @@ export default function App() {
         📊
       </button>
 
+      {/* Night mode toggle */}
+      <button
+        onClick={toggleNightMode}
+        style={{
+          position: 'absolute', top: 12, left: 144,
+          background: nightMode ? 'rgba(30,30,80,0.9)' : 'rgba(30,30,55,0.8)',
+          border: '2px solid #3a3a5c', borderRadius: 0,
+          width: 36, height: 36, fontSize: 18,
+          cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center',
+          color: nightMode ? '#ffd' : '#aaa',
+          fontFamily: '"Heebo", "Segoe UI", sans-serif',
+          boxShadow: 'inset -2px -2px 0 #0a0a1a, inset 2px 2px 0 #2a2a4a',
+        }}
+        title={nightMode ? 'Day Mode' : 'Night Mode'}
+      >
+        {nightMode ? '🌙' : '☀️'}
+      </button>
+
       {/* Edit mode toggle button — hidden in viewer mode */}
       {!isViewer && <button
         onClick={() => setEditMode(m => !m)}
         style={{
-          position: 'absolute', top: 12, left: 144,
+          position: 'absolute', top: 12, left: 188,
           background: editMode ? 'rgba(100,100,255,0.6)' : 'rgba(30,30,55,0.8)',
           border: '2px solid #3a3a5c', borderRadius: 0,
           padding: '6px 10px', fontSize: 9, cursor: 'pointer',

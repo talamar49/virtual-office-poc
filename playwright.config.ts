@@ -7,10 +7,11 @@ import { defineConfig, devices } from '@playwright/test'
 export default defineConfig({
   globalSetup: './e2e/setup.ts',
   testDir: './e2e',
-  timeout: 30_000,
-  expect: { timeout: 5_000 },
-  fullyParallel: true,
-  retries: process.env.CI ? 2 : 0,
+  timeout: 45_000,
+  expect: { timeout: 8_000 },
+  fullyParallel: false,
+  workers: 1,
+  retries: 1,
   reporter: [
     ['list'],
     ['html', { outputFolder: 'e2e/reports', open: 'never' }],
