@@ -2244,6 +2244,27 @@ function drawAgent(
     }
   }
 
+  // ── Mood emoji — expression based on agent state ──
+  const moodMap: Record<AgentState, string> = {
+    working: '😤',   // focused / determined
+    active: '😊',    // happy / engaged
+    idle: '😴',      // sleepy
+    offline: '💤',   // zzz
+    error: '😰',     // stressed
+  }
+  const mood = moodMap[agent.def.state]
+  if (mood && !isOffline) {
+    const moodX = Math.round(sx + 18)
+    const moodY = Math.round(sy - SPRITE_DISPLAY + 14 + breathOffset + sitOffset)
+    // Gentle bobbing animation
+    const bob = Math.sin(t * 2.5 + agent.x * 3) * 2
+    ctx.font = '12px serif'
+    ctx.textAlign = 'center'
+    ctx.globalAlpha = 0.85
+    ctx.fillText(mood, moodX, moodY + bob)
+    ctx.globalAlpha = 1
+  }
+
   // ── Task label — speech bubble above every agent showing current task ──
   if (agent.def.task) {
     const taskText = shortTask(agent.def.task)
