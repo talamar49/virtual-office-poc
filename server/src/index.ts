@@ -21,7 +21,26 @@ import { startPoller, stopPoller } from './services/status-poller.js';
 const app = express();
 const PORT = parseInt(process.env.PORT || '3001');
 
-app.use(cors());
+// CORS — restrict to known origins (dev + production)
+const ALLOWED_ORIGINS = process.env.ALLOWED_ORIGINS
+  ? process.env.ALLOWED_ORIGINS.split(',').map(o => o.trim())
+  : [
+      'http://localhost:5173',   // Vite dev server
+      'http://localhost:3001',   // production (same origin)
+      'http://127.0.0.1:5173',
+      'http://127.0.0.1:3001',
+    ];
+
+app.use(cors({
+  origin: (origin, callback) => {
+    // Allow requests with no origin (same-origin, curl, mobile apps)
+    if (!origin) return callback(null, true);
+    if (ALLOWED_ORIGINS.includes(origin)) return callback(null, true);
+    console.warn(`[CORS] Blocked origin: ${origin}`);
+    callback(new Error(`CORS: origin not allowed`));
+  },
+  credentials: true,
+}));
 app.use(express.json());
 import { transcribeRouter } from './routes/transcribe.js';
 import { seatingRouter } from './routes/seating.js';

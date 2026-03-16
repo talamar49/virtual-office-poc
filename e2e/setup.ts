@@ -2,8 +2,10 @@
  * Global setup — writes localStorage auth so tests skip the settings screen.
  */
 import { chromium } from '@playwright/test'
-import fs from 'fs'
+import { fileURLToPath } from 'url'
 import path from 'path'
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
 const GATEWAY_TOKEN = process.env.GATEWAY_TOKEN || '689f7e21b95f21b17992b22e7e0f3a62e6e061b665b8187b'
 const GATEWAY_URL   = process.env.GATEWAY_URL   || 'http://127.0.0.1:18789'

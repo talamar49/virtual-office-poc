@@ -5,6 +5,7 @@ import { defineConfig, devices } from '@playwright/test'
  * Covers: Chrome, Firefox, WebKit + mobile viewports
  */
 export default defineConfig({
+  globalSetup: './e2e/setup.ts',
   testDir: './e2e',
   timeout: 30_000,
   expect: { timeout: 5_000 },

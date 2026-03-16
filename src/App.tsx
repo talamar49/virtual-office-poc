@@ -2804,7 +2804,6 @@ function drawScene(
   }
 
   // Viewport indicator — approximate visible area from pan offset
-  const { isoW, isoH } = getIsoBounds()
   if (isoW > 0 && isoH > 0) {
     const vpLeft = Math.max(0, (-panX) / isoW * MAP_COLS)
     const vpTop = Math.max(0, (-panY) / isoH * MAP_ROWS)
