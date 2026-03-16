@@ -519,12 +519,17 @@ proxyRouter.post('/history', async (req: Request, res: Response) => {
     return;
   }
 
-  const { sessionKey, agentId, limit = 50, after } = req.body ?? {};
-  if (!sessionKey) {
-    res.status(400).json({ error: 'Missing sessionKey in body' });
+  const rawSessionKey = req.body?.sessionKey;
+  if (!isValidSessionKey(rawSessionKey)) {
+    res.status(400).json({ error: 'Missing or invalid sessionKey' });
     return;
   }
+  const sessionKey = rawSessionKey.trim();
+  const limit = toPositiveInt(req.body?.limit, 50, 200);
+  const after = typeof req.body?.after === 'string' ? req.body.after : undefined;
 
+  const rawAgentId = req.body?.agentId;
+  const agentId = rawAgentId && isValidAgentId(rawAgentId) ? String(rawAgentId).trim() : undefined;
   const effectiveAgentId = agentId ?? sessionKey.match(/^agent:([^:]+)/)?.[1] ?? 'unknown';
 
   try {

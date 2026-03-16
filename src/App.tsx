@@ -2696,6 +2696,73 @@ function drawScene(
     ctx.fillText(labels.editMode || 'Edit Mode', w / 2, 50)
   }
 
+  // ── Hover Tooltip — detailed info popup on hover ──
+  if (hoverAgentId) {
+    const hoverAgent = agents.find(a => a.def.id === hoverAgentId)
+    if (hoverAgent) {
+      const [hix, hiy] = toIso(hoverAgent.x, hoverAgent.y)
+      const hsx = ox + hix
+      const hsy = oy + hiy
+
+      const known = KNOWN_AGENTS[hoverAgent.def.id]
+      const name = hoverAgent.def.name
+      const role = known?.role || 'Agent'
+      const state = hoverAgent.def.state
+      const stateLabel = STATE_META[state]?.label || state
+      const stateColor = STATE_META[state]?.color || '#888'
+      const room = ROOM_MAP.get(hoverAgent.room)
+      const roomLabel = room ? `${room.emoji} ${room.label}` : ''
+      const task = hoverAgent.def.task ? shortTask(hoverAgent.def.task) : ''
+
+      // Tooltip dimensions
+      ctx.font = 'bold 11px "Heebo", sans-serif'
+      const nameW = ctx.measureText(`${name} — ${role}`).width
+      ctx.font = '10px "Heebo", sans-serif'
+      const taskW = task ? ctx.measureText(task).width : 0
+      const tipW = Math.max(nameW, taskW) + 20
+      const tipH = task ? 58 : 42
+      const tipX = Math.round(hsx - tipW / 2)
+      const tipY = Math.round(hsy - SPRITE_DISPLAY - tipH - 20)
+
+      // Background
+      ctx.fillStyle = 'rgba(15, 18, 28, 0.92)'
+      ctx.beginPath()
+      ctx.roundRect(tipX, tipY, tipW, tipH, 6)
+      ctx.fill()
+      ctx.strokeStyle = `${stateColor}55`
+      ctx.lineWidth = 1
+      ctx.stroke()
+
+      // Arrow
+      ctx.fillStyle = 'rgba(15, 18, 28, 0.92)'
+      ctx.beginPath()
+      ctx.moveTo(hsx - 5, tipY + tipH)
+      ctx.lineTo(hsx + 5, tipY + tipH)
+      ctx.lineTo(hsx, tipY + tipH + 5)
+      ctx.closePath()
+      ctx.fill()
+
+      // Name + role
+      ctx.font = 'bold 11px "Heebo", sans-serif'
+      ctx.textAlign = 'left'
+      ctx.fillStyle = '#eee'
+      ctx.fillText(`${name} — ${role}`, tipX + 10, tipY + 16)
+
+      // State + room
+      ctx.font = '10px "Heebo", sans-serif'
+      ctx.fillStyle = stateColor
+      ctx.fillText(`● ${stateLabel}`, tipX + 10, tipY + 30)
+      ctx.fillStyle = 'rgba(255,255,255,0.5)'
+      ctx.fillText(roomLabel, tipX + 10 + ctx.measureText(`● ${stateLabel}  `).width, tipY + 30)
+
+      // Task
+      if (task) {
+        ctx.fillStyle = 'rgba(255,255,255,0.7)'
+        ctx.fillText(`📋 ${task}`, tipX + 10, tipY + 44)
+      }
+    }
+  }
+
   // ── Mini-map — bird's eye view in bottom-left corner ──
   const mmW = Math.min(160, w * 0.2)  // 20% of canvas width, max 160px
   const mmH = mmW * (MAP_ROWS / MAP_COLS)
@@ -2736,20 +2803,22 @@ function drawScene(
     ctx.fill()
   }
 
-  // Viewport indicator — show what's currently visible
+  // Viewport indicator — approximate visible area from pan offset
   const { isoW, isoH } = getIsoBounds()
-  const vpLeft = (-panX) / isoW * MAP_COLS
-  const vpTop = (-panY) / isoH * MAP_ROWS
-  const vpCols = (w / zoom) / isoW * MAP_COLS
-  const vpRows = (h / zoom) / isoH * MAP_ROWS
-  ctx.strokeStyle = 'rgba(255,255,255,0.5)'
-  ctx.lineWidth = 1
-  ctx.strokeRect(
-    mmX + Math.max(0, vpLeft) * mmTileW,
-    mmY + Math.max(0, vpTop) * mmTileH,
-    Math.min(MAP_COLS, vpCols) * mmTileW,
-    Math.min(MAP_ROWS, vpRows) * mmTileH,
-  )
+  if (isoW > 0 && isoH > 0) {
+    const vpLeft = Math.max(0, (-panX) / isoW * MAP_COLS)
+    const vpTop = Math.max(0, (-panY) / isoH * MAP_ROWS)
+    const vpCols = Math.min(MAP_COLS, w / isoW * MAP_COLS)
+    const vpRows = Math.min(MAP_ROWS, h / isoH * MAP_ROWS)
+    ctx.strokeStyle = 'rgba(255,255,255,0.5)'
+    ctx.lineWidth = 1
+    ctx.strokeRect(
+      mmX + vpLeft * mmTileW,
+      mmY + vpTop * mmTileH,
+      vpCols * mmTileW,
+      vpRows * mmTileH,
+    )
+  }
 
   // Label
   ctx.font = '8px "Heebo", sans-serif'
@@ -2795,12 +2864,12 @@ function SettingsScreen({ onConnect, t, dir, toggleLang, lang, error }: {
   toggleLang: () => void
   lang: Lang
 }) {
-  const [token, setToken] = useState(localStorage.getItem('gateway-token') || '')
-  const [url, setUrl] = useState(localStorage.getItem('gateway-url') || 'http://127.0.0.1:18789')
+  const [token, setToken] = useState(sessionStorage.getItem('gateway-token') || '')
+  const [url, setUrl] = useState(sessionStorage.getItem('gateway-url') || 'http://127.0.0.1:18789')
 
   const handleConnect = () => {
-    localStorage.setItem('gateway-token', token)
-    localStorage.setItem('gateway-url', url)
+    sessionStorage.setItem('gateway-token', token)
+    sessionStorage.setItem('gateway-url', url)
     onConnect(token, url)
   }
 
@@ -3134,9 +3203,9 @@ export default function App() {
   const [notifications, setNotifications] = useState<OfficeNotification[]>([])
   const prevStatesRef = useRef<Map<string, AgentState>>(new Map())
   // Settings state
-  const [showSettings, setShowSettings] = useState(() => !localStorage.getItem('gateway-token'))
-  const [gatewayToken, setGatewayToken] = useState(() => localStorage.getItem('gateway-token') || '')
-  const [gatewayUrl, setGatewayUrl] = useState(() => localStorage.getItem('gateway-url') || 'http://127.0.0.1:18789')
+  const [showSettings, setShowSettings] = useState(() => !sessionStorage.getItem('gateway-token'))
+  const [gatewayToken, setGatewayToken] = useState(() => sessionStorage.getItem('gateway-token') || '')
+  const [gatewayUrl, setGatewayUrl] = useState(() => sessionStorage.getItem('gateway-url') || 'http://127.0.0.1:18789')
 
   // Dashboard mode toggle
   const [dashboardMode, setDashboardMode] = useState(false)
@@ -4466,39 +4535,165 @@ export default function App() {
         </div>
       )}
 
-      {/* Bottom status bar — responsive */}
+      {/* Bottom status bar — responsive, with search + filter */}
       <div style={{
         position: 'absolute', bottom: 0, left: 0, right: 0,
         background: 'rgba(20,20,40,0.95)', borderTop: '2px solid #3a3a5c',
-        padding: isCompact ? '4px 4px' : isMobile ? '6px 8px' : '8px 16px',
         fontFamily: '"Heebo", "Segoe UI", sans-serif',
         boxShadow: 'inset 0 2px 0 #2a2a4a',
-        display: 'flex', gap: isCompact ? 2 : isMobile ? 6 : 12,
-        justifyContent: isMobile ? 'flex-start' : 'center',
-        flexWrap: isMobile ? 'nowrap' : 'wrap',
-        overflowX: isMobile ? 'auto' : 'visible',
-        WebkitOverflowScrolling: 'touch',
+        direction: 'rtl',
       }}>
-        {agentDefs.map(a => (
-          <div key={a.id} onClick={() => setSelectedId(s => s === a.id ? null : a.id)} style={{
-            display: 'flex', alignItems: 'center', gap: isCompact ? 2 : isMobile ? 3 : 5,
-            padding: isCompact ? '3px 3px' : isMobile ? '2px 5px' : '3px 8px',
-            borderRadius: 0, cursor: 'pointer', fontSize: isCompact ? 11 : isMobile ? 12 : 13,
-            background: selectedId === a.id ? 'rgba(100,100,200,0.3)' : 'transparent',
-            whiteSpace: 'nowrap', flexShrink: 0,
-            // Minimum touch target 44px height on mobile
-            minHeight: isMobile ? 36 : undefined,
-          }}>
-            <span style={{
-              width: isCompact ? 6 : 7, height: isCompact ? 6 : 7, borderRadius: '50%',
-              background: STATE_META[a.state].color, display: 'inline-block',
-            }} />
-            <span style={{ color: '#ccc' }}>
-              {isCompact ? a.emoji : `${a.emoji} ${a.name}`}
+        {/* Search + filter row */}
+        <div style={{
+          display: 'flex', alignItems: 'center',
+          gap: 6, padding: isCompact ? '3px 6px' : '4px 12px',
+          borderBottom: '1px solid rgba(255,255,255,0.05)',
+        }}>
+          <input
+            ref={searchInputRef}
+            type="text"
+            value={searchQuery}
+            onChange={e => setSearchQuery(e.target.value)}
+            placeholder={t.searchPlaceholder}
+            style={{
+              width: isCompact ? 100 : 140,
+              height: 26,
+              padding: '0 8px',
+              borderRadius: 4,
+              border: '1px solid rgba(255,255,255,0.1)',
+              background: 'rgba(255,255,255,0.05)',
+              color: '#ccc',
+              fontSize: 11,
+              outline: 'none',
+              fontFamily: '"Heebo", "Segoe UI", sans-serif',
+              direction: 'rtl',
+            }}
+            onFocus={e => { e.currentTarget.style.borderColor = '#4a6aff' }}
+            onBlur={e => { e.currentTarget.style.borderColor = 'rgba(255,255,255,0.1)' }}
+          />
+          {!isCompact && ([
+            ['all', t.filterAll],
+            ['active', t.filterActive],
+            ['working', t.filterWorking],
+            ['offline', t.filterOffline],
+          ] as const).map(([key, label]) => (
+            <button
+              key={key}
+              onClick={() => setStatusFilter(key as typeof statusFilter)}
+              style={{
+                padding: '2px 8px',
+                borderRadius: 4,
+                border: 'none',
+                background: statusFilter === key ? 'rgba(74,106,255,0.4)' : 'rgba(255,255,255,0.05)',
+                color: statusFilter === key ? '#fff' : '#888',
+                fontSize: 10,
+                cursor: 'pointer',
+                fontFamily: '"Heebo", "Segoe UI", sans-serif',
+              }}
+            >
+              {label}
+            </button>
+          ))}
+          {!isCompact && (
+            <span style={{ fontSize: 10, color: '#555', marginRight: 'auto' }}>
+              / {t.shortcutSearch} &nbsp; ? {t.shortcuts}
             </span>
-          </div>
-        ))}
+          )}
+        </div>
+        {/* Agent list row */}
+        <div style={{
+          display: 'flex', gap: isCompact ? 2 : isMobile ? 6 : 12,
+          justifyContent: isMobile ? 'flex-start' : 'center',
+          flexWrap: isMobile ? 'nowrap' : 'wrap',
+          overflowX: isMobile ? 'auto' : 'visible',
+          WebkitOverflowScrolling: 'touch',
+          padding: isCompact ? '3px 4px' : isMobile ? '4px 8px' : '6px 16px',
+        }}>
+          {filteredAgents.map((a, i) => (
+            <div key={a.id} onClick={() => setSelectedId(s => s === a.id ? null : a.id)} style={{
+              display: 'flex', alignItems: 'center', gap: isCompact ? 2 : isMobile ? 3 : 5,
+              padding: isCompact ? '3px 3px' : isMobile ? '2px 5px' : '3px 8px',
+              borderRadius: 0, cursor: 'pointer', fontSize: isCompact ? 11 : isMobile ? 12 : 13,
+              background: selectedId === a.id ? 'rgba(100,100,200,0.3)' : 'transparent',
+              whiteSpace: 'nowrap', flexShrink: 0,
+              minHeight: isMobile ? 36 : undefined,
+            }}>
+              {!isCompact && <span style={{ fontSize: 9, color: '#555', marginLeft: 2 }}>{i + 1}</span>}
+              <span style={{
+                width: isCompact ? 6 : 7, height: isCompact ? 6 : 7, borderRadius: '50%',
+                background: STATE_META[a.state].color, display: 'inline-block',
+              }} />
+              <span style={{ color: '#ccc' }}>
+                {isCompact ? a.emoji : `${a.emoji} ${a.name}`}
+              </span>
+            </div>
+          ))}
+          {filteredAgents.length === 0 && (
+            <span style={{ color: '#666', fontSize: 12, padding: 4 }}>{t.noResults}</span>
+          )}
+        </div>
       </div>
+
+      {/* Keyboard shortcuts modal */}
+      {showShortcuts && (
+        <div
+          onClick={() => setShowShortcuts(false)}
+          style={{
+            position: 'absolute', inset: 0, background: 'rgba(0,0,0,0.6)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            zIndex: 100, fontFamily: '"Heebo", sans-serif',
+          }}
+        >
+          <div
+            onClick={e => e.stopPropagation()}
+            style={{
+              background: '#1a1d35', border: '2px solid #3a3a5c',
+              borderRadius: 12, padding: 24, width: 320,
+              color: '#e0e0e0', direction: 'rtl',
+            }}
+          >
+            <h3 style={{ margin: '0 0 16px', fontSize: 16, textAlign: 'center' }}>
+              ⌨️ {t.shortcuts}
+            </h3>
+            {[
+              ['/', t.shortcutSearch],
+              ['D', t.shortcutDashboard],
+              ['E', t.shortcutEdit],
+              ['S', t.shortcutSound],
+              ['J / →', t.shortcutNext],
+              ['K / ←', t.shortcutPrev],
+              ['1-9', t.agents],
+              ['Esc', t.shortcutClose],
+              ['?', t.shortcuts],
+            ].map(([key, desc]) => (
+              <div key={key} style={{
+                display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                padding: '6px 0', borderBottom: '1px solid rgba(255,255,255,0.06)',
+              }}>
+                <span style={{ color: '#aaa', fontSize: 13 }}>{desc}</span>
+                <kbd style={{
+                  background: 'rgba(255,255,255,0.1)', padding: '2px 8px',
+                  borderRadius: 4, fontSize: 12, color: '#7B68EE',
+                  border: '1px solid rgba(255,255,255,0.15)',
+                  fontFamily: 'monospace',
+                }}>{key}</kbd>
+              </div>
+            ))}
+            <div style={{ textAlign: 'center', marginTop: 16 }}>
+              <button
+                onClick={() => setShowShortcuts(false)}
+                style={{
+                  background: 'rgba(74,106,255,0.3)', border: '1px solid rgba(74,106,255,0.5)',
+                  borderRadius: 8, padding: '6px 20px', color: '#fff',
+                  fontSize: 13, cursor: 'pointer', fontFamily: '"Heebo", sans-serif',
+                }}
+              >
+                {t.shortcutClose} (Esc)
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Detail panel — chat-focused, compact header */}
       {selectedAgent && (
