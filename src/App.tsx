@@ -3312,6 +3312,27 @@ export default function App() {
   const [gatewayToken, setGatewayToken] = useState(() => sessionStorage.getItem('gateway-token') || '')
   const [gatewayUrl, setGatewayUrl] = useState(() => sessionStorage.getItem('gateway-url') || 'http://127.0.0.1:18789')
 
+  // Auto-detect gateway token from backend (reads openclaw.json)
+  useEffect(() => {
+    if (isViewer) return
+    if (sessionStorage.getItem('gateway-token')) return // already have a token
+    const backendBase = window.location.port === '5173' ? 'http://localhost:3001' : window.location.origin
+    fetch(`${backendBase}/api/config`)
+      .then(r => r.json())
+      .then(data => {
+        if (data.token) {
+          sessionStorage.setItem('gateway-token', data.token)
+          setGatewayToken(data.token)
+          if (data.url) {
+            sessionStorage.setItem('gateway-url', data.url)
+            setGatewayUrl(data.url)
+          }
+          setShowSettings(false) // skip login screen!
+        }
+      })
+      .catch(() => { /* server not reachable — show manual settings */ })
+  }, [isViewer])
+
   // Dashboard mode toggle
   const [dashboardMode, setDashboardMode] = useState(false)
   const [searchQuery, setSearchQuery] = useState('')

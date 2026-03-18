@@ -3,6 +3,8 @@
  */
 
 import { Router } from 'express';
+import { readFileSync } from 'fs';
+import { join } from 'path';
 import { getFullState, getAgentStatus, getPollerStats } from '../services/status-poller.js';
 import { checkGatewayHealth, getCircuitStatus } from '../services/gateway-client.js';
 import { getClientCount, getWsStats } from '../ws/handler.js';
@@ -13,6 +15,31 @@ import { getNotifications, markRead, markAllRead, getNotificationStats } from '.
 import { getAllMetrics } from '../services/metrics.js';
 
 export const apiRouter: ReturnType<typeof Router> = Router();
+
+/**
+ * GET /api/config
+ * Returns gateway token + URL, read directly from openclaw.json.
+ */
+apiRouter.get('/config', (_req, res) => {
+  try {
+    const home = process.env.HOME || '/root';
+    const configPath = join(home, '.openclaw', 'openclaw.json');
+    const raw = readFileSync(configPath, 'utf-8');
+    const cleaned = raw
+      .replace(/\/\/.*$/gm, '')
+      .replace(/\/\*[\s\S]*?\*\//g, '')
+      .replace(/,(\s*[}\]])/g, '$1');
+    const config = JSON.parse(cleaned);
+    const token = config?.gateway?.token ?? process.env.GATEWAY_TOKEN ?? '';
+    const url = process.env.GATEWAY_URL || 'http://127.0.0.1:18789';
+    res.json({ token, url });
+  } catch {
+    res.json({
+      token: process.env.GATEWAY_TOKEN || '',
+      url: process.env.GATEWAY_URL || 'http://127.0.0.1:18789',
+    });
+  }
+});
 
 /**
  * GET /api/health

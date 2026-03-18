@@ -26,9 +26,13 @@ const ALLOWED_ORIGINS = process.env.ALLOWED_ORIGINS
   ? process.env.ALLOWED_ORIGINS.split(',').map(o => o.trim())
   : [
       'http://localhost:5173',   // Vite dev server
+      'http://localhost:18000',  // Vite dev server (alt port)
       'http://localhost:3001',   // production (same origin)
       'http://127.0.0.1:5173',
+      'http://127.0.0.1:18000',
       'http://127.0.0.1:3001',
+      'http://10.100.102.119:18000',
+      'http://100.106.68.51:18000',
     ];
 
 app.use(cors({
