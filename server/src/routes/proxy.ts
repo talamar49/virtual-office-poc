@@ -18,6 +18,41 @@ export const proxyRouter: ReturnType<typeof Router> = Router();
 
 const PROXY_TIMEOUT_MS = 15_000;
 
+// ── Input Validation Helpers ──
+
+/** Clamp a numeric body param to [min, max], fallback to defaultVal */
+function toPositiveInt(val: unknown, defaultVal: number, max: number): number {
+  const n = parseInt(String(val ?? ''), 10);
+  if (isNaN(n) || n <= 0) return defaultVal;
+  return Math.min(n, max);
+}
+
+/** Validate sessionKey format: agent:...  or alphanumeric/colon/dash */
+function isValidSessionKey(key: unknown): key is string {
+  return typeof key === 'string' && /^[a-zA-Z0-9:_-]{1,512}$/.test(key.trim());
+}
+
+/** Validate agentId: alphanumeric + dash/underscore, max 64 chars */
+function isValidAgentId(id: unknown): id is string {
+  return typeof id === 'string' && /^[a-zA-Z0-9_-]{1,64}$/.test(id.trim());
+}
+
+/** Sanitize free-text message: strip null bytes, cap length */
+function sanitizeMessage(msg: unknown, maxLen = 10_000): string {
+  if (typeof msg !== 'string') return '';
+  return msg.replace(/\0/g, '').slice(0, maxLen);
+}
+
+/** Validate gateway URL — http/https only */
+function isValidGatewayUrl(urlStr: string): boolean {
+  try {
+    const url = new URL(urlStr);
+    return ['http:', 'https:'].includes(url.protocol);
+  } catch {
+    return false;
+  }
+}
+
 // ── Chat History Store ──
 // In-memory store that keeps all chat messages per agent.
 // Merges office-chat messages with Gateway session history.
@@ -274,17 +309,13 @@ proxyRouter.post('/sessions', async (req: Request, res: Response) => {
   }
 
   // Validate URL format
-  try {
-    const parsedUrl = new URL(gatewayUrl);
-    if (!['http:', 'https:'].includes(parsedUrl.protocol)) {
-      throw new Error('Invalid protocol');
-    }
-  } catch {
+  if (!isValidGatewayUrl(gatewayUrl)) {
     res.status(400).json({ error: 'Invalid X-Gateway-URL — must be a valid http/https URL' });
     return;
   }
 
-  const { activeMinutes = 120, messageLimit = 1 } = req.body ?? {};
+  const activeMinutes = toPositiveInt(req.body?.activeMinutes, 120, 1440); // max 24h
+  const messageLimit = toPositiveInt(req.body?.messageLimit, 1, 50);       // max 50
 
   try {
     const controller = new AbortController();
@@ -351,9 +382,28 @@ proxyRouter.post('/send', async (req: Request, res: Response) => {
     return;
   }
 
-  const { sessionKey, message, agentId } = req.body ?? {};
-  if (!sessionKey || !message) {
-    res.status(400).json({ error: 'Missing sessionKey or message in body' });
+  const rawSessionKey = req.body?.sessionKey;
+  const rawMessage = req.body?.message;
+  const rawAgentId = req.body?.agentId;
+
+  // Validate sessionKey
+  if (!isValidSessionKey(rawSessionKey)) {
+    res.status(400).json({ error: 'Missing or invalid sessionKey' });
+    return;
+  }
+  const sessionKey = rawSessionKey.trim();
+
+  // Validate and sanitize message
+  const message = sanitizeMessage(rawMessage);
+  if (!message) {
+    res.status(400).json({ error: 'Missing or empty message' });
+    return;
+  }
+
+  // Validate agentId (optional but must be valid if provided)
+  const agentId = rawAgentId != null ? String(rawAgentId).trim() : undefined;
+  if (agentId && !isValidAgentId(agentId)) {
+    res.status(400).json({ error: 'Invalid agentId format' });
     return;
   }
 
@@ -361,11 +411,8 @@ proxyRouter.post('/send', async (req: Request, res: Response) => {
   if (agentId) {
     const keyMatch = sessionKey.match(/^agent:([^:]+)/);
     const keyAgentId = keyMatch ? keyMatch[1] : null;
-    // Compare agent IDs (no hardcoded aliases)
-    const normalizedKey = keyAgentId;
-    const normalizedTarget = agentId;
 
-    if (normalizedKey !== normalizedTarget) {
+    if (keyAgentId && keyAgentId !== agentId) {
       console.warn(`[Proxy] Routing mismatch! agentId="${agentId}" but sessionKey belongs to "${keyAgentId}". Blocking.`);
       res.status(400).json({
         error: `Routing mismatch: sessionKey belongs to "${keyAgentId}" but target is "${agentId}"`,
@@ -472,12 +519,17 @@ proxyRouter.post('/history', async (req: Request, res: Response) => {
     return;
   }
 
-  const { sessionKey, agentId, limit = 50, after } = req.body ?? {};
-  if (!sessionKey) {
-    res.status(400).json({ error: 'Missing sessionKey in body' });
+  const rawSessionKey = req.body?.sessionKey;
+  if (!isValidSessionKey(rawSessionKey)) {
+    res.status(400).json({ error: 'Missing or invalid sessionKey' });
     return;
   }
+  const sessionKey = rawSessionKey.trim();
+  const limit = toPositiveInt(req.body?.limit, 50, 200);
+  const after = typeof req.body?.after === 'string' ? req.body.after : undefined;
 
+  const rawAgentId = req.body?.agentId;
+  const agentId = rawAgentId && isValidAgentId(rawAgentId) ? String(rawAgentId).trim() : undefined;
   const effectiveAgentId = agentId ?? sessionKey.match(/^agent:([^:]+)/)?.[1] ?? 'unknown';
 
   try {

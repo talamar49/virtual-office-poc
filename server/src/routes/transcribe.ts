@@ -62,7 +62,13 @@ transcribeRouter.post('/', upload.single('audio') as any, async (req: any, res: 
   const id = randomBytes(8).toString('hex');
   const inputPath = join(tmpdir(), `vo-audio-${id}.webm`);
   const wavPath = join(tmpdir(), `vo-audio-${id}.wav`);
-  const lang = (req.body?.lang as string) || 'auto';
+  // Whitelist of valid language codes — prevents CLI injection via lang param
+  const VALID_LANGS = new Set([
+    'auto', 'he', 'en', 'ar', 'fr', 'de', 'es', 'ru', 'zh', 'ja', 'pt', 'it',
+    'nl', 'pl', 'tr', 'ko', 'uk', 'sv', 'fi', 'da', 'no',
+  ]);
+  const rawLang = String(req.body?.lang ?? 'auto').toLowerCase().trim();
+  const lang = VALID_LANGS.has(rawLang) ? rawLang : 'auto';
 
   try {
     // Write uploaded file

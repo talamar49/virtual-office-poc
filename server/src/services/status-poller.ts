@@ -7,6 +7,9 @@
 
 import { fetchSessions } from './gateway-client.js';
 import { getAgentMeta, getAllAgentIds, fromGatewayAgentId, type Zone } from '../config/agents.js';
+import { recordActivity } from './activity-log.js';
+import { evaluateTransition } from './notifications.js';
+import { recordStateChange, recordMessage } from './metrics.js';
 
 // --- Types ---
 
@@ -217,6 +220,46 @@ async function pollCycle(): Promise<void> {
 
       const diff = computeDiffs(oldStatus, newStatus);
       if (diff) {
+        const meta = getAgentMeta(agentId);
+
+        // Log state transitions + generate notifications
+        if (diff.state && diff.state !== oldStatus.state) {
+          const isError = diff.state === 'error';
+          const isRecovery = oldStatus.state === 'error' && diff.state !== 'error';
+
+          recordActivity({
+            agentId,
+            agentName: meta.name,
+            agentEmoji: meta.emoji,
+            type: isRecovery ? 'recovery' : isError ? 'error' : 'state-change',
+            fromState: oldStatus.state,
+            toState: diff.state,
+            timestamp: Date.now(),
+          });
+
+          // Generate notification for significant transitions
+          const notif = evaluateTransition(agentId, meta.name, meta.emoji, oldStatus.state, diff.state);
+          if (notif) {
+            broadcastFn?.('notification', notif);
+          }
+
+          // Record metrics
+          recordStateChange(agentId, oldStatus.state, diff.state);
+        }
+
+        // Log zone transitions
+        if (diff.zone && diff.zone !== oldStatus.zone) {
+          recordActivity({
+            agentId,
+            agentName: meta.name,
+            agentEmoji: meta.emoji,
+            type: 'zone-change',
+            fromZone: oldStatus.zone,
+            toZone: diff.zone,
+            timestamp: Date.now(),
+          });
+        }
+
         updates.push({
           agentId,
           changes: diff,

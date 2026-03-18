@@ -531,4 +531,111 @@ curl -X POST http://localhost:PORT/tools/invoke/sessions_history \
 
 ---
 
-*תיעוד זה נכתב על ידי עידו 🦞 מתוך ניתוח קוד המקור של OpenClaw v2026.3.9*
+## 8. Virtual Office Backend API
+
+The Virtual Office backend exposes its own REST API on top of the Gateway proxy.
+These endpoints are used by the frontend and are distinct from Gateway tool calls.
+
+### GET /api/health
+
+```bash
+curl http://localhost:3001/api/health
+```
+
+```json
+{
+  "status": "ok",
+  "uptime": 3600,
+  "wsClients": 2,
+  "gateway": { "connected": true, "latencyMs": 12, "circuit": "closed" },
+  "poller": { "lastPollAt": 1773262329209, "pollCount": 1800, "errorCount": 0 }
+}
+```
+
+### GET /api/agents
+
+Returns all discovered agents with current state.
+
+```bash
+curl http://localhost:3001/api/agents
+```
+
+```json
+{
+  "count": 13,
+  "agents": [
+    {
+      "id": "omer",
+      "name": "עומר",
+      "emoji": "👨‍💻",
+      "state": "working",
+      "zone": "work",
+      "task": "code review",
+      "model": "claude-opus-4-6",
+      "tokenUsage": 143369,
+      "sessionKey": "agent:omer:discord:channel:..."
+    }
+  ]
+}
+```
+
+### GET /api/seating
+
+Returns persistent seat assignments (survives server restarts).
+
+```bash
+curl http://localhost:3001/api/seating
+```
+
+```json
+{
+  "ok": true,
+  "assignments": {
+    "omer": { "room": "work", "col": 5, "row": 1 },
+    "noa":  { "room": "work", "col": 8, "row": 1 }
+  }
+}
+```
+
+### POST /api/seating
+
+Assign an agent to a specific seat. Requires `X-Gateway-Token` header.
+
+```bash
+curl -X POST http://localhost:3001/api/seating \
+  -H "X-Gateway-Token: YOUR_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"agentId": "omer", "room": "work", "col": 5, "row": 1}'
+```
+
+**Valid rooms:** `work`, `lounge`, `meeting`, `reception`, `coffee`  
+**col/row:** integers 0–50
+
+### DELETE /api/seating/:agentId
+
+Remove a seat assignment (agent returns to default zone). Requires `X-Gateway-Token`.
+
+```bash
+curl -X DELETE http://localhost:3001/api/seating/omer \
+  -H "X-Gateway-Token: YOUR_TOKEN"
+```
+
+### POST /api/transcribe
+
+Transcribe an audio file via whisper.cpp. Requires `WHISPER_BIN` + `WHISPER_MODEL` in `.env`.
+
+```bash
+curl -X POST http://localhost:3001/api/transcribe \
+  -F "audio=@recording.webm"
+```
+
+```json
+{ "text": "מה הסטטוס של הפרויקט?" }
+```
+
+**Limits:** 25MB max file size. Internally converts to WAV 16kHz mono via ffmpeg.
+
+---
+
+*תיעוד זה נכתב על ידי עידו 🦞 מתוך ניתוח קוד המקור של OpenClaw v2026.3.9*  
+*עדכון 2026-03-16: הוספת Backend API routes — דנה 💜*

@@ -1,12 +1,25 @@
 #!/usr/bin/env bash
 set -e
 
-# OpenClaw Virtual Office — One-line installer
-# Usage: curl -fsSL https://raw.githubusercontent.com/openclaw/virtual-office/main/install.sh | bash
+# OpenClaw Virtual Office — Installer
+# Usage:
+#   Install:  curl -fsSL https://raw.githubusercontent.com/openclaw/virtual-office/main/install.sh | bash
+#   Update:   bash ~/virtual-office/install.sh --update
+#   Docker:   bash ~/virtual-office/install.sh --docker
 
 REPO_URL="https://github.com/openclaw/virtual-office.git"
 INSTALL_DIR="$HOME/virtual-office"
 SERVICE_NAME="virtual-office"
+MODE="install"
+
+# Parse flags
+for arg in "$@"; do
+  case "$arg" in
+    --update) MODE="update" ;;
+    --docker) MODE="docker" ;;
+    --uninstall) MODE="uninstall" ;;
+  esac
+done
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -18,6 +31,8 @@ echo ""
 echo -e "${CYAN}🏢 OpenClaw Virtual Office — Installer${NC}"
 echo "========================================"
 echo ""
+
+do_install() {
 
 # Check dependencies
 for cmd in git node npm; do
@@ -183,3 +198,67 @@ else
   echo "  sudo journalctl -u $SERVICE_NAME -n 30"
   exit 1
 fi
+}
+
+# ─── Update mode ──────────────────────────────────────────────
+do_update() {
+  [ -d "$INSTALL_DIR" ] || { echo -e "${RED}❌ Not installed. Run without --update first.${NC}"; exit 1; }
+  echo -e "${CYAN}🔄 Updating OpenClaw Virtual Office...${NC}"
+  git -C "$INSTALL_DIR" pull
+  (cd "$INSTALL_DIR" && npm install --silent && npm run build)
+  (cd "$INSTALL_DIR/server" && npm install --silent && npm run build)
+  sudo systemctl restart "$SERVICE_NAME"
+  echo -e "${GREEN}✅ Updated and restarted!${NC}"
+}
+
+# ─── Docker mode ──────────────────────────────────────────────
+do_docker() {
+  command -v docker &>/dev/null || { echo -e "${RED}❌ Docker not found.${NC}"; exit 1; }
+
+  # Clone/update repo
+  if [ -d "$INSTALL_DIR" ]; then
+    git -C "$INSTALL_DIR" pull --quiet
+  else
+    git clone "$REPO_URL" "$INSTALL_DIR"
+  fi
+
+  # Setup .env if missing
+  if [ ! -f "$INSTALL_DIR/server/.env" ]; then
+    cp "$INSTALL_DIR/server/.env.example" "$INSTALL_DIR/server/.env"
+    echo -e "${YELLOW}⚠️  Fill in GATEWAY_TOKEN in $INSTALL_DIR/server/.env${NC}"
+  fi
+
+  # Auto-detect token
+  if [ -f "$HOME/.openclaw/openclaw.json" ] && command -v python3 &>/dev/null; then
+    TOKEN=$(python3 -c "import json; d=json.load(open('$HOME/.openclaw/openclaw.json')); print(d.get('gateway',{}).get('auth',{}).get('token',''))" 2>/dev/null)
+    PORT_VAL=$(python3 -c "import json; d=json.load(open('$HOME/.openclaw/openclaw.json')); print(d.get('gateway',{}).get('port',18789))" 2>/dev/null)
+    if [ -n "$TOKEN" ]; then
+      sed -i "s|^GATEWAY_TOKEN=.*|GATEWAY_TOKEN=$TOKEN|" "$INSTALL_DIR/server/.env"
+      sed -i "s|^GATEWAY_URL=.*|GATEWAY_URL=http://host.docker.internal:$PORT_VAL|" "$INSTALL_DIR/server/.env"
+      echo -e "${GREEN}✅ Gateway token auto-detected${NC}"
+    fi
+  fi
+
+  cd "$INSTALL_DIR"
+  docker compose up -d --build
+  echo -e "${GREEN}✅ Running! → http://localhost:3001${NC}"
+}
+
+# ─── Uninstall mode ───────────────────────────────────────────
+do_uninstall() {
+  echo -e "${YELLOW}⚠️  Uninstalling OpenClaw Virtual Office...${NC}"
+  sudo systemctl stop "$SERVICE_NAME" 2>/dev/null || true
+  sudo systemctl disable "$SERVICE_NAME" 2>/dev/null || true
+  sudo rm -f "/etc/systemd/system/${SERVICE_NAME}.service"
+  sudo systemctl daemon-reload
+  echo -e "${GREEN}✅ Service removed. Data at $INSTALL_DIR is kept.${NC}"
+  echo "To remove data: rm -rf $INSTALL_DIR"
+}
+
+# ─── Main ─────────────────────────────────────────────────────
+case "$MODE" in
+  update)    do_update ;;
+  docker)    do_docker ;;
+  uninstall) do_uninstall ;;
+  install)   do_install ;;
+esac

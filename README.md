@@ -30,12 +30,14 @@ openclaw gateway status
 ## ✨ Features
 
 - 🗺️ **Isometric pixel-art office** — agents sit at their desks, move around, and animate in real-time
+- 📊 **Dashboard Mode** — grid view of all agents with status, task, token usage, model, and last activity
 - 👥 **Dynamic agent discovery** — automatically detects all active agents from your OpenClaw Gateway
 - 💬 **Live chat** — send messages to any agent and see responses in the office
 - 🎙️ **Voice recording** — record voice messages transcribed via whisper.cpp (optional)
 - 📎 **File attachments** — attach files to agent messages
 - 🌐 **i18n** — full Hebrew/English support with language toggle
 - ⚡ **Real-time WebSocket updates** — agent status refreshes every 2 seconds
+- 🎨 **Office editor** — drag-and-drop furniture and decorations
 - 📱 **Responsive** — works on desktop, tablet, and mobile
 
 ---
@@ -149,6 +151,48 @@ vo logs
 
 ---
 
+## 🐳 Docker
+
+### Quick start with Docker Compose
+
+```bash
+# Copy and fill in your Gateway token
+cp server/.env.example server/.env
+# Edit server/.env with your GATEWAY_TOKEN
+
+# Build and run
+docker compose up -d
+
+# View logs
+docker compose logs -f
+```
+
+The app will be available at http://localhost:3001
+
+### Connect to OpenClaw Gateway
+
+If your Gateway runs on the host machine, the compose file uses `host.docker.internal` automatically. If your Gateway is on a different host or Tailscale IP:
+
+```bash
+# server/.env
+GATEWAY_URL=http://100.106.68.51:18789
+GATEWAY_TOKEN=your_token_here
+```
+
+### Build manually
+
+```bash
+docker build -t openclaw/virtual-office .
+docker run -d \
+  --name virtual-office \
+  -p 3001:3001 \
+  --env-file server/.env \
+  --add-host host.docker.internal:host-gateway \
+  openclaw/virtual-office
+```
+
+---
+
 ## 🏭 Production Setup
 
 ### Build
@@ -251,11 +295,18 @@ WHISPER_MODEL=/path/to/whisper.cpp/models/ggml-small.bin
 
 | Path | Description |
 |------|-------------|
-| `src/App.tsx` | Main React app + canvas rendering |
+| `src/App.tsx` | Main React app — canvas rendering, Dashboard view, UI |
 | `server/src/index.ts` | Express + WebSocket server |
 | `server/src/services/gateway-client.ts` | OpenClaw Gateway API client |
-| `server/src/routes/proxy.ts` | Chat proxy route |
-| `public/assets/` | Pixel art sprites (characters, furniture, tiles) |
+| `server/src/services/status-poller.ts` | Polls Gateway every 2s, broadcasts via WebSocket |
+| `server/src/routes/api.ts` | REST endpoints: `/api/health`, `/api/agents` |
+| `server/src/routes/proxy.ts` | Chat proxy: sessions_list, sessions_send, sessions_history |
+| `server/src/routes/seating.ts` | Persistent seat assignments |
+| `server/src/routes/transcribe.ts` | Voice transcription via whisper.cpp |
+| `public/assets/` | Pixel art sprites (characters, furniture, tiles, decorations) |
+| `docs/GATEWAY-API.md` | OpenClaw Gateway API reference |
+| `docs/ARCHITECTURE.md` | Full architecture diagram and component docs |
+| `docs/DASHBOARD.md` | Dashboard Mode documentation |
 | `install.sh` | One-line installer with systemd setup |
 
 ---

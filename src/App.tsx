@@ -1,4 +1,5 @@
 import { useRef, useEffect, useState, useCallback } from 'react'
+import { jsPDF } from 'jspdf'
 
 // ── i18n ──
 type Lang = 'he' | 'en'
@@ -59,6 +60,34 @@ const translations = {
     backToOffice: 'חזור למשרד',
     dashboard: 'Dashboard',
     taskCompleted: 'סיים משימה',
+    searchPlaceholder: '🔍 חפש סוכן...',
+    shortcuts: 'קיצורי מקלדת',
+    shortcutSearch: 'חיפוש סוכן',
+    shortcutDashboard: 'תצוגת Dashboard',
+    shortcutEdit: 'מצב עריכה',
+    shortcutSound: 'סאונד',
+    shortcutClose: 'סגור',
+    shortcutNext: 'סוכן הבא',
+    shortcutPrev: 'סוכן הקודם',
+    noResults: 'לא נמצאו סוכנים',
+    filterAll: 'הכל',
+    filterActive: 'פעילים',
+    filterWorking: 'עובדים',
+    filterOffline: 'לא מחוברים',
+    groupBy: 'קבוצות',
+    addGroup: '+ קבוצה חדשה',
+    ungrouped: 'ללא קבוצה',
+    editGroups: 'ערוך קבוצות',
+    doneEditing: 'סיום',
+    deleteGroup: 'מחק',
+    dragToGroup: 'גרור סוכן לקבוצה',
+    groupName: 'שם קבוצה',
+    exportImage: 'ייצוא PNG',
+    exportPdf: 'ייצוא PDF',
+    exportMenu: '📸 ייצוא',
+    share: '🔗 שתף',
+    viewerMode: '👁️ מצב צפייה',
+    linkCopied: 'הקישור הועתק!',
   },
   en: {
     virtualOffice: 'Virtual Office',
@@ -116,6 +145,34 @@ const translations = {
     backToOffice: 'Back to Office',
     dashboard: 'Dashboard',
     taskCompleted: 'Task completed',
+    searchPlaceholder: '🔍 Search agent...',
+    shortcuts: 'Keyboard Shortcuts',
+    shortcutSearch: 'Search agent',
+    shortcutDashboard: 'Dashboard view',
+    shortcutEdit: 'Edit mode',
+    shortcutSound: 'Sound',
+    shortcutClose: 'Close',
+    shortcutNext: 'Next agent',
+    shortcutPrev: 'Previous agent',
+    noResults: 'No agents found',
+    filterAll: 'All',
+    filterActive: 'Active',
+    filterWorking: 'Working',
+    filterOffline: 'Offline',
+    groupBy: 'Groups',
+    addGroup: '+ New Group',
+    ungrouped: 'Ungrouped',
+    editGroups: 'Edit Groups',
+    doneEditing: 'Done',
+    deleteGroup: 'Delete',
+    dragToGroup: 'Drag agent to group',
+    groupName: 'Group name',
+    exportImage: 'Export PNG',
+    exportPdf: 'Export PDF',
+    exportMenu: '📸 Export',
+    share: '🔗 Share',
+    viewerMode: '👁️ Viewer Mode',
+    linkCopied: 'Link copied!',
   },
 } as const
 
@@ -206,20 +263,246 @@ interface AgentRuntime {
 const AGENT_MOVE_SPEED = 3 // tiles per second
 
 // ── Room system ──
-type RoomId = 'reception' | 'dev' | 'openspace' | 'biz' | 'qa' | 'meeting' | 'lounge' | 'manager'
+type RoomId = 'reception' | 'dev' | 'openspace' | 'biz' | 'qa' | 'meeting' | 'meeting2' | 'lounge' | 'manager' | 'rnd' | 'training' | 'library'
 
 interface Room {
   id: RoomId
   label: string
   emoji: string
-  sign: string          // sign text displayed on the wall
-  floorType: number     // index into FLOOR_STYLES
+  sign: string
+  floorType: number
   startCol: number
   endCol: number
   startRow: number
   endRow: number
-  seats: [number, number][]  // cubicle/seat positions within the room
-  loungeSeats?: [number, number][] // sofa positions (lounge only)
+  seats: [number, number][]
+  loungeSeats?: [number, number][]
+}
+
+// ── Office sizing — 6 tiers ──
+type OfficeSize = 'XS' | 'S' | 'M' | 'L' | 'XL' | 'XXL'
+
+function getOfficeSize(agentCount: number): OfficeSize {
+  if (agentCount <= 5) return 'XS'
+  if (agentCount <= 10) return 'S'
+  if (agentCount <= 20) return 'M'
+  if (agentCount <= 30) return 'L'
+  if (agentCount <= 40) return 'XL'
+  return 'XXL'
+}
+
+let currentOfficeSize: OfficeSize = 'L'
+
+// Helper: generate N lounge seats in a grid within bounds
+function generateLoungeSeats(count: number, startCol: number, endCol: number, startRow: number, endRow: number): [number, number][] {
+  const seats: [number, number][] = []
+  const cols = Math.floor((endCol - startCol) / 3)
+  for (let i = 0; i < count && seats.length < count; i++) {
+    const c = startCol + 1 + (i % cols) * 3
+    const r = startRow + 1 + Math.floor(i / cols) * 2
+    if (c <= endCol && r <= endRow) seats.push([c, r])
+  }
+  return seats
+}
+
+// Helper: generate cubicle seats in grid (cols × rows, spaced 3 apart)
+function generateSeats(count: number, startCol: number, startRow: number, maxCols: number): [number, number][] {
+  const seats: [number, number][] = []
+  for (let i = 0; i < count; i++) {
+    const c = startCol + (i % maxCols) * 3
+    const r = startRow + Math.floor(i / maxCols) * 3
+    seats.push([c, r])
+  }
+  return seats
+}
+
+// ── Layout definitions per office size ──
+interface OfficeLayout {
+  gridCols: number
+  gridRows: number
+  rooms: Room[]
+  maxAgents: number
+}
+
+function buildLayout_XS(): OfficeLayout {
+  return {
+    gridCols: 12, gridRows: 10, maxAgents: 5,
+    rooms: [
+      { id: 'reception', label: 'קבלה', emoji: '📋', sign: 'OpenClaw HQ',
+        floorType: 4, startCol: 0, endCol: 11, startRow: 0, endRow: 1, seats: [] },
+      { id: 'openspace', label: 'Open Space', emoji: '🏢', sign: '',
+        floorType: 0, startCol: 0, endCol: 11, startRow: 2, endRow: 7,
+        seats: generateSeats(5, 1, 3, 4) },
+      { id: 'lounge', label: 'Lounge', emoji: '☕', sign: '☕ Lounge',
+        floorType: 2, startCol: 0, endCol: 11, startRow: 8, endRow: 9,
+        seats: [], loungeSeats: generateLoungeSeats(5, 0, 11, 8, 9) },
+    ],
+  }
+}
+
+function buildLayout_S(): OfficeLayout {
+  return {
+    gridCols: 14, gridRows: 14, maxAgents: 10,
+    rooms: [
+      { id: 'reception', label: 'קבלה', emoji: '📋', sign: 'OpenClaw HQ',
+        floorType: 4, startCol: 0, endCol: 13, startRow: 0, endRow: 1, seats: [] },
+      { id: 'openspace', label: 'Open Space', emoji: '🏢', sign: '',
+        floorType: 0, startCol: 0, endCol: 13, startRow: 2, endRow: 9,
+        seats: generateSeats(10, 1, 3, 5) },
+      { id: 'lounge', label: 'Lounge', emoji: '☕', sign: '☕ Lounge',
+        floorType: 2, startCol: 0, endCol: 13, startRow: 10, endRow: 13,
+        seats: [], loungeSeats: generateLoungeSeats(10, 0, 13, 10, 13) },
+    ],
+  }
+}
+
+function buildLayout_M(): OfficeLayout {
+  return {
+    gridCols: 21, gridRows: 20, maxAgents: 20,
+    rooms: [
+      { id: 'reception', label: 'קבלה', emoji: '📋', sign: 'OpenClaw HQ',
+        floorType: 4, startCol: 0, endCol: 20, startRow: 0, endRow: 2, seats: [] },
+      { id: 'dev', label: 'Dev Team', emoji: '💻', sign: '⚡ Dev Team',
+        floorType: 5, startCol: 0, endCol: 6, startRow: 3, endRow: 9,
+        seats: generateSeats(4, 1, 4, 2) },
+      { id: 'openspace', label: 'Open Space', emoji: '🏢', sign: '',
+        floorType: 0, startCol: 7, endCol: 20, startRow: 3, endRow: 13,
+        seats: generateSeats(12, 8, 4, 5) },
+      { id: 'qa', label: 'QA Lab', emoji: '🔍', sign: '🔍 QA Lab',
+        floorType: 7, startCol: 0, endCol: 6, startRow: 10, endRow: 13,
+        seats: generateSeats(2, 1, 11, 2) },
+      { id: 'lounge', label: 'Lounge', emoji: '☕', sign: '☕ Lounge',
+        floorType: 2, startCol: 0, endCol: 20, startRow: 14, endRow: 19,
+        seats: [], loungeSeats: generateLoungeSeats(20, 0, 20, 14, 19) },
+    ],
+  }
+}
+
+function buildLayout_L(): OfficeLayout {
+  return {
+    gridCols: 25, gridRows: 22, maxAgents: 30,
+    rooms: [
+      { id: 'reception', label: 'קבלה', emoji: '📋', sign: 'OpenClaw HQ',
+        floorType: 4, startCol: 0, endCol: 24, startRow: 0, endRow: 2, seats: [] },
+      { id: 'dev', label: 'Dev Team', emoji: '💻', sign: '⚡ Dev Team',
+        floorType: 5, startCol: 0, endCol: 6, startRow: 3, endRow: 11,
+        seats: generateSeats(6, 1, 4, 2) },
+      { id: 'openspace', label: 'Open Space', emoji: '🏢', sign: '',
+        floorType: 0, startCol: 7, endCol: 16, startRow: 3, endRow: 15,
+        seats: generateSeats(12, 8, 4, 3) },
+      { id: 'biz', label: 'Business', emoji: '📈', sign: '📊 Business',
+        floorType: 6, startCol: 17, endCol: 24, startRow: 3, endRow: 11,
+        seats: generateSeats(6, 18, 4, 2) },
+      { id: 'qa', label: 'QA Lab', emoji: '🔍', sign: '🔍 QA Lab',
+        floorType: 7, startCol: 0, endCol: 6, startRow: 12, endRow: 15,
+        seats: generateSeats(3, 1, 13, 2) },
+      { id: 'meeting', label: 'Meeting Room', emoji: '🏢', sign: '',
+        floorType: 3, startCol: 17, endCol: 24, startRow: 12, endRow: 15, seats: [] },
+      { id: 'lounge', label: 'Lounge', emoji: '☕', sign: '☕ Lounge',
+        floorType: 2, startCol: 0, endCol: 16, startRow: 16, endRow: 21,
+        seats: [], loungeSeats: generateLoungeSeats(30, 0, 16, 16, 21) },
+      { id: 'manager', label: 'Manager', emoji: '🐻', sign: '',
+        floorType: 8, startCol: 17, endCol: 24, startRow: 16, endRow: 21,
+        seats: [[19, 18]] },
+    ],
+  }
+}
+
+function buildLayout_XL(): OfficeLayout {
+  return {
+    gridCols: 30, gridRows: 26, maxAgents: 40,
+    rooms: [
+      { id: 'reception', label: 'קבלה', emoji: '📋', sign: 'OpenClaw HQ',
+        floorType: 4, startCol: 0, endCol: 29, startRow: 0, endRow: 2, seats: [] },
+      { id: 'dev', label: 'Dev Team', emoji: '💻', sign: '⚡ Dev Team',
+        floorType: 5, startCol: 0, endCol: 7, startRow: 3, endRow: 13,
+        seats: generateSeats(8, 1, 4, 2) },
+      { id: 'openspace', label: 'Open Space', emoji: '🏢', sign: '',
+        floorType: 0, startCol: 8, endCol: 17, startRow: 3, endRow: 17,
+        seats: generateSeats(15, 9, 4, 3) },
+      { id: 'biz', label: 'Business', emoji: '📈', sign: '📊 Business',
+        floorType: 6, startCol: 18, endCol: 23, startRow: 3, endRow: 13,
+        seats: generateSeats(8, 19, 4, 2) },
+      { id: 'rnd', label: 'R&D', emoji: '🧪', sign: '🧪 R&D',
+        floorType: 5, startCol: 24, endCol: 29, startRow: 3, endRow: 13,
+        seats: generateSeats(8, 25, 4, 2) },
+      { id: 'qa', label: 'QA Lab', emoji: '🔍', sign: '🔍 QA Lab',
+        floorType: 7, startCol: 0, endCol: 7, startRow: 14, endRow: 17,
+        seats: generateSeats(4, 1, 15, 2) },
+      { id: 'meeting', label: 'Meeting Room', emoji: '🏢', sign: '',
+        floorType: 3, startCol: 18, endCol: 23, startRow: 14, endRow: 17, seats: [] },
+      { id: 'meeting2', label: 'Meeting 2', emoji: '🏢', sign: '',
+        floorType: 3, startCol: 24, endCol: 29, startRow: 14, endRow: 17, seats: [] },
+      { id: 'lounge', label: 'Lounge', emoji: '☕', sign: '☕ Lounge',
+        floorType: 2, startCol: 0, endCol: 20, startRow: 18, endRow: 25,
+        seats: [], loungeSeats: generateLoungeSeats(40, 0, 20, 18, 25) },
+      { id: 'manager', label: 'Manager', emoji: '🐻', sign: '',
+        floorType: 8, startCol: 21, endCol: 29, startRow: 18, endRow: 25,
+        seats: [[23, 20], [26, 20]] },
+    ],
+  }
+}
+
+function buildLayout_XXL(): OfficeLayout {
+  return {
+    gridCols: 34, gridRows: 30, maxAgents: 50,
+    rooms: [
+      { id: 'reception', label: 'קבלה', emoji: '📋', sign: 'OpenClaw HQ',
+        floorType: 4, startCol: 0, endCol: 33, startRow: 0, endRow: 3, seats: [] },
+      { id: 'dev', label: 'Dev Team', emoji: '💻', sign: '⚡ Dev Team',
+        floorType: 5, startCol: 0, endCol: 7, startRow: 4, endRow: 15,
+        seats: generateSeats(10, 1, 5, 2) },
+      { id: 'openspace', label: 'Open Space', emoji: '🏢', sign: '',
+        floorType: 0, startCol: 8, endCol: 17, startRow: 4, endRow: 19,
+        seats: generateSeats(16, 9, 5, 3) },
+      { id: 'biz', label: 'Business', emoji: '📈', sign: '📊 Business',
+        floorType: 6, startCol: 18, endCol: 23, startRow: 4, endRow: 15,
+        seats: generateSeats(8, 19, 5, 2) },
+      { id: 'rnd', label: 'R&D', emoji: '🧪', sign: '🧪 R&D',
+        floorType: 5, startCol: 24, endCol: 29, startRow: 4, endRow: 15,
+        seats: generateSeats(8, 25, 5, 2) },
+      { id: 'training', label: 'Training', emoji: '🎓', sign: '🎓 Training',
+        floorType: 0, startCol: 30, endCol: 33, startRow: 4, endRow: 15,
+        seats: generateSeats(8, 31, 5, 1) },
+      { id: 'qa', label: 'QA Lab', emoji: '🔍', sign: '🔍 QA Lab',
+        floorType: 7, startCol: 0, endCol: 7, startRow: 16, endRow: 19,
+        seats: generateSeats(4, 2, 17, 2) },  // col offset 2 to avoid dev seat collision
+      { id: 'meeting', label: 'Meeting Room', emoji: '🏢', sign: '',
+        floorType: 3, startCol: 18, endCol: 23, startRow: 16, endRow: 19, seats: [] },
+      { id: 'meeting2', label: 'Meeting 2', emoji: '🏢', sign: '',
+        floorType: 3, startCol: 24, endCol: 29, startRow: 16, endRow: 19, seats: [] },
+      { id: 'library', label: 'Library', emoji: '📚', sign: '📚 Library',
+        floorType: 8, startCol: 30, endCol: 33, startRow: 16, endRow: 19, seats: [] },
+      { id: 'lounge', label: 'Lounge', emoji: '☕', sign: '☕ Lounge',
+        floorType: 2, startCol: 0, endCol: 24, startRow: 20, endRow: 29,
+        seats: [], loungeSeats: generateLoungeSeats(50, 0, 24, 20, 29) },
+      { id: 'manager', label: 'Manager', emoji: '🐻', sign: '',
+        floorType: 8, startCol: 25, endCol: 33, startRow: 20, endRow: 29,
+        seats: [[27, 22], [30, 22], [27, 26]] },
+    ],
+  }
+}
+
+const LAYOUT_BUILDERS: Record<OfficeSize, () => OfficeLayout> = {
+  XS: buildLayout_XS, S: buildLayout_S, M: buildLayout_M,
+  L: buildLayout_L, XL: buildLayout_XL, XXL: buildLayout_XXL,
+}
+
+// Active layout — mutable, rebuilt when office size changes
+let activeLayout: OfficeLayout = buildLayout_L()
+const ROOMS: Room[] = [...activeLayout.rooms]
+const ROOM_MAP = new Map<RoomId, Room>(ROOMS.map(r => [r.id, r]))
+
+function applyLayout(layout: OfficeLayout) {
+  activeLayout = layout
+  ROOMS.length = 0
+  ROOMS.push(...layout.rooms)
+  ROOM_MAP.clear()
+  layout.rooms.forEach(r => ROOM_MAP.set(r.id, r))
+  MAP_COLS = layout.gridCols
+  MAP_ROWS = layout.gridRows
+  currentOfficeSize = getOfficeSize(layout.maxAgents)
+  console.log(`[Office] Applied layout: ${currentOfficeSize} (${MAP_COLS}×${MAP_ROWS}, ${ROOMS.length} rooms, max ${layout.maxAgents} agents)`)
 }
 
 // Team assignments — which agents belong to which work room
@@ -231,38 +514,11 @@ const TEAM_ROOMS: Record<string, RoomId> = {
   yogi: 'manager',
 }
 
-// Default room for unknown agents
+// Default room for unknown agents — falls back to openspace if room doesn't exist in current layout
 function getWorkRoom(agentId: string): RoomId {
-  return TEAM_ROOMS[agentId] || 'openspace'
+  const preferred = TEAM_ROOMS[agentId] || 'openspace'
+  return ROOM_MAP.has(preferred) ? preferred : 'openspace'
 }
-
-// Room definitions — fixed layout
-const ROOMS: Room[] = [
-  { id: 'reception', label: 'קבלה', emoji: '📋', sign: 'OpenClaw HQ',
-    floorType: 4, startCol: 0, endCol: 20, startRow: 0, endRow: 2, seats: [] },
-  { id: 'dev', label: 'Dev Team', emoji: '💻', sign: '⚡ Dev Team',
-    floorType: 5, startCol: 0, endCol: 5, startRow: 3, endRow: 9,
-    seats: [[1, 4], [1, 7], [3, 4]] },
-  { id: 'openspace', label: 'Open Space', emoji: '🏢', sign: '',
-    floorType: 0, startCol: 6, endCol: 14, startRow: 3, endRow: 9,
-    seats: [[7, 4], [7, 7], [10, 4], [10, 7], [13, 4], [13, 7]] },
-  { id: 'biz', label: 'Business', emoji: '📈', sign: '📊 Business',
-    floorType: 6, startCol: 15, endCol: 20, startRow: 3, endRow: 9,
-    seats: [[16, 4], [16, 7], [18, 4], [18, 7]] },
-  { id: 'qa', label: 'QA Lab', emoji: '🔍', sign: '🔍 QA Lab',
-    floorType: 7, startCol: 0, endCol: 5, startRow: 10, endRow: 13,
-    seats: [[1, 11], [3, 11]] },
-  { id: 'meeting', label: 'Meeting Room', emoji: '🏢', sign: '',
-    floorType: 3, startCol: 15, endCol: 20, startRow: 10, endRow: 13, seats: [] },
-  { id: 'lounge', label: 'Lounge', emoji: '☕', sign: '☕ Lounge',
-    floorType: 2, startCol: 0, endCol: 14, startRow: 14, endRow: 19,
-    seats: [], loungeSeats: [[2, 15], [2, 17], [5, 15], [5, 17], [8, 15], [8, 17], [11, 15], [11, 17]] },
-  { id: 'manager', label: 'Manager', emoji: '🐻', sign: '',
-    floorType: 8, startCol: 15, endCol: 20, startRow: 14, endRow: 19,
-    seats: [[17, 16]] },
-]
-
-const ROOM_MAP = new Map<RoomId, Room>(ROOMS.map(r => [r.id, r]))
 
 function getRoomAt(col: number, row: number): Room | undefined {
   for (const r of ROOMS) {
@@ -274,8 +530,8 @@ function getRoomAt(col: number, row: number): Room | undefined {
 // ── Isometric constants ──
 const TILE_W = 64
 const TILE_H = 32
-const SPRITE_SIZE = 32
-const SPRITE_DISPLAY = 64
+const SPRITE_SIZE = 64    // v6/v7 assets are 64×64
+const SPRITE_DISPLAY = 64 // display size matches native (1:1, no upscale)
 
 // Fixed map size for room-based layout
 let MAP_COLS = 21
@@ -314,7 +570,6 @@ function findPath(from: [number, number], to: [number, number]): [number, number
   const [fx, fy] = from
   const [tx, ty] = to
   // L-shape: go horizontal first, then vertical (avoids walls between rooms)
-  const midPoint: [number, number] = [tx, fy]
   const path: [number, number][] = []
   // Horizontal leg
   const dx = tx > fx ? 1 : -1
@@ -326,33 +581,126 @@ function findPath(from: [number, number], to: [number, number]): [number, number
   return path
 }
 
+// ── Custom seating overrides (populated from backend API) ──
+let _seatingOverrides: Record<string, { room: string; col: number; row: number }> = {}
+
+// ── Work seat allocation — per-room tracking to prevent overlap ──
+// Maps agentId → { roomId, seatIndex }
+const workSeatAssignments: Map<string, { roomId: RoomId; seatIndex: number }> = new Map()
+
+function assignWorkSeat(agentId: string, roomId: RoomId): [number, number] {
+  const room = ROOM_MAP.get(roomId)!
+  const seats = room.seats
+
+  // Already assigned to this room?
+  const existing = workSeatAssignments.get(agentId)
+  if (existing && existing.roomId === roomId && existing.seatIndex < seats.length) {
+    return seats[existing.seatIndex]
+  }
+
+  // Release old assignment if switching rooms
+  releaseWorkSeat(agentId)
+
+  // Find first free seat in this room
+  const takenInRoom = new Set<number>()
+  for (const [, assignment] of workSeatAssignments) {
+    if (assignment.roomId === roomId) takenInRoom.add(assignment.seatIndex)
+  }
+  for (let i = 0; i < seats.length; i++) {
+    if (!takenInRoom.has(i)) {
+      workSeatAssignments.set(agentId, { roomId, seatIndex: i })
+      return seats[i]
+    }
+  }
+
+  // Room full — overflow to openspace
+  if (roomId !== 'openspace') {
+    console.warn(`[Seating] Room '${roomId}' full — overflow '${agentId}' to openspace`)
+    return assignWorkSeat(agentId, 'openspace')
+  }
+
+  // Openspace also full — generate overflow position with offset
+  const overflowIdx = takenInRoom.size
+  const baseSeat = seats.length > 0 ? seats[overflowIdx % seats.length] : [Math.floor((room.startCol + room.endCol) / 2), Math.floor((room.startRow + room.endRow) / 2)] as [number, number]
+  const offset = Math.floor(overflowIdx / Math.max(seats.length, 1))
+  const overflowPos: [number, number] = [baseSeat[0] + offset + 1, baseSeat[1]]
+  workSeatAssignments.set(agentId, { roomId, seatIndex: seats.length + overflowIdx })
+  console.warn(`[Seating] Overflow: '${agentId}' at [${overflowPos}]`)
+  return overflowPos
+}
+
+function releaseWorkSeat(agentId: string) {
+  workSeatAssignments.delete(agentId)
+}
+
+// ── Collision detection — verify no two agents share a tile ──
+const _occupiedTiles: Map<string, string> = new Map() // "col,row" → agentId
+
+function claimTile(agentId: string, col: number, row: number): [number, number] {
+  const key = `${col},${row}`
+  const occupant = _occupiedTiles.get(key)
+  if (occupant && occupant !== agentId) {
+    // Collision! Nudge this agent to adjacent tile
+    console.warn(`[Seating] Collision: '${agentId}' and '${occupant}' both at [${col},${row}] — nudging`)
+    // Try offsets: right, below, left, above, diagonals
+    const offsets: [number, number][] = [[1, 0], [0, 1], [-1, 0], [0, -1], [1, 1], [-1, 1], [1, -1], [-1, -1]]
+    for (const [dx, dy] of offsets) {
+      const nk = `${col + dx},${row + dy}`
+      if (!_occupiedTiles.has(nk)) {
+        _occupiedTiles.set(nk, agentId)
+        return [col + dx, row + dy]
+      }
+    }
+    // All adjacent taken — stack with small offset (worst case)
+    _occupiedTiles.set(`${col + 2},${row}`, agentId)
+    return [col + 2, row]
+  }
+  // Release old tile claim
+  for (const [k, v] of _occupiedTiles) {
+    if (v === agentId) { _occupiedTiles.delete(k); break }
+  }
+  _occupiedTiles.set(key, agentId)
+  return [col, row]
+}
+
 // ── Get target tile based on state ──
 function getTargetTileForAgent(agentId: string, state: AgentState): { pos: [number, number]; room: RoomId } {
+  // Check custom seating override first (drag & drop assignments)
+  const override = _seatingOverrides[agentId]
+  if (override && (state === 'working' || state === 'active' || state === 'error')) {
+    releaseLoungeSpot(agentId)
+    releaseWorkSeat(agentId)
+    const pos = claimTile(agentId, override.col, override.row)
+    return { pos, room: override.room as RoomId }
+  }
+
   // Idle/offline → lounge
   if (state === 'idle' || state === 'offline') {
+    releaseWorkSeat(agentId)
     const pos = assignLoungeSpot(agentId)
-    return { pos, room: 'lounge' }
+    const claimed = claimTile(agentId, pos[0], pos[1])
+    return { pos: claimed, room: 'lounge' }
   }
   // Working/active/error → assigned work room cubicle
   releaseLoungeSpot(agentId)
   const roomId = getWorkRoom(agentId)
-  const room = ROOM_MAP.get(roomId)!
-  const known = KNOWN_AGENTS[agentId]
-  const idx = known?.fixedIndex ?? 0
-  if (room.seats.length > 0) {
-    const seat = room.seats[idx % room.seats.length]
-    return { pos: seat, room: roomId }
-  }
-  // Fallback — room center
-  const cx = Math.floor((room.startCol + room.endCol) / 2)
-  const cy = Math.floor((room.startRow + room.endRow) / 2)
-  return { pos: [cx, cy], room: roomId }
+  const seat = assignWorkSeat(agentId, roomId)
+  const claimed = claimTile(agentId, seat[0], seat[1])
+  return { pos: claimed, room: roomId }
 }
 
-function computeGridSize(_agentCount: number) {
-  // Fixed layout — rooms don't resize
-  MAP_COLS = 21
-  MAP_ROWS = 20
+const MAX_AGENTS = 50
+
+function computeGridSize(agentCount: number) {
+  if (agentCount > MAX_AGENTS) {
+    console.warn(`[Office] Maximum capacity reached! ${agentCount} agents (max ${MAX_AGENTS})`)
+  }
+  const size = getOfficeSize(Math.min(agentCount, MAX_AGENTS))
+  if (size !== currentOfficeSize) {
+    console.log(`[Office] Scaling: ${currentOfficeSize} → ${size} (${agentCount} agents)`)
+  }
+  const builder = LAYOUT_BUILDERS[size]
+  applyLayout(builder())
 }
 
 // ── Responsive breakpoints ──
@@ -637,7 +985,264 @@ function screenToTile(mx: number, my: number, ox: number, oy: number): [number, 
   return [Math.round(col), Math.round(row)]
 }
 
-// Decoration images — loaded lazily
+// ── Asset loading system — v6 primary (64×64), v4 fallback (128×128) ──
+const V6_BASE = '/assets/furniture/v6'
+const V4_BASE = '/assets/furniture/v4'
+
+// v6 assets (64×64 isometric pixel art — Amir's latest)
+const V6_ASSETS = [
+  // Floors
+  'floor_wood', 'floor_marble', 'floor_carpet_gray', 'floor_carpet_green', 'floor_carpet_dark',
+  // Walls — base + oriented variants (north = top-left edge, east = top-right edge)
+  'wall_plain', 'wall_window', 'wall_door', 'wall_glass',
+  'wall_plain_north', 'wall_window_north', 'wall_door_north', 'wall_glass_north',
+  'wall_plain_east', 'wall_window_east', 'wall_door_east', 'wall_glass_east',
+  // Furniture — all v6 now!
+  'bookshelf', 'cubicle_work', 'coffee_station', 'lounge_sofa',
+  'manager_desk', 'meeting_table', 'plant_large', 'plant_small',
+  'printer', 'reception_desk', 'server_rack', 'water_cooler',
+]
+
+// v4 fallback assets (128×128) — only for assets not yet in v6
+const V4_FALLBACK = [
+  'floor_carpet_warm',  // v6 has warm→green, keep v4 warm as extra option
+]
+
+// Floor sprite mapping: floorType → asset name
+const FLOOR_SPRITE_MAP: Record<number, string | null> = {
+  0: 'floor_wood',          // Open Space — parquet
+  1: null,                  // stone (flat color fallback)
+  2: 'floor_carpet_dark',   // Lounge — warm carpet (v6 dark carpet)
+  3: null,                  // Meeting Room (flat — dark blue)
+  4: 'floor_marble',        // Reception — marble
+  5: null,                  // Dev Room (flat — dark monitor glow)
+  6: 'floor_carpet_gray',   // Business Wing — gray carpet
+  7: 'floor_carpet_gray',   // QA Corner — gray carpet
+  8: 'floor_wood',          // Manager — wood
+}
+
+// Wall config per room edge — orientation-aware sprites
+// North walls (top-left edge in iso) use wall_*_north, East walls (top-right edge) use wall_*_east
+type WallOrientation = 'north' | 'east'
+interface WallSegment { col: number; row: number; side: 'top' | 'left'; orientation: WallOrientation; sprite: string }
+
+/** Get wall sprite name with orientation suffix */
+function wallSpriteName(base: string, orient: WallOrientation): string {
+  // Try oriented sprite first (wall_plain_north), fall back to base (wall_plain)
+  return `${base}_${orient}`
+}
+
+function generateRoomWalls(): WallSegment[] {
+  const segs: WallSegment[] = []
+  for (const room of ROOMS) {
+    if (room.id === 'reception') continue
+    // Top wall (north-facing — left-upper edge in isometric)
+    for (let c = room.startCol; c <= room.endCol; c++) {
+      const base = (c === Math.floor((room.startCol + room.endCol) / 2)) ? 'wall_door'
+        : (c % 3 === 0) ? 'wall_window' : 'wall_plain'
+      segs.push({ col: c, row: room.startRow, side: 'top', orientation: 'north', sprite: wallSpriteName(base, 'north') })
+    }
+    // Left wall (east-facing — right-upper edge in isometric)
+    for (let r = room.startRow; r <= room.endRow; r++) {
+      segs.push({ col: room.startCol, row: r, side: 'left', orientation: 'east', sprite: wallSpriteName('wall_plain', 'east') })
+    }
+  }
+  return segs
+}
+
+let ROOM_WALLS = generateRoomWalls()
+
+// Per-room furniture placement
+interface FurniturePlacement { asset: string; col: number; row: number; scale?: number }
+
+// Dynamic furniture — generated from room layout
+// Cubicle desks placed 1 row NORTH of seat (agent faces south/camera)
+function generateRoomFurniture(): Record<string, FurniturePlacement[]> {
+  const furn: Record<string, FurniturePlacement[]> = {}
+
+  for (const room of ROOMS) {
+    const items: FurniturePlacement[] = []
+
+    // Auto-place cubicle_work 1 row north of each seat
+    if (room.seats.length > 0 && room.id !== 'manager') {
+      for (const [col, row] of room.seats) {
+        items.push({ asset: 'cubicle_work', col, row: row - 1 })
+      }
+    }
+
+    // Room-specific extras
+    const midCol = Math.floor((room.startCol + room.endCol) / 2)
+    switch (room.id) {
+      case 'reception':
+        items.push({ asset: 'reception_desk', col: midCol, row: room.startRow + 1 })
+        items.push({ asset: 'plant_large', col: room.startCol + 2, row: room.startRow + 1 })
+        items.push({ asset: 'plant_large', col: room.endCol - 2, row: room.startRow + 1 })
+        items.push({ asset: 'water_cooler', col: midCol + 4, row: room.startRow + 1 })
+        break
+      case 'dev':
+        items.push({ asset: 'server_rack', col: room.endCol - 1, row: room.endRow - 1 })
+        items.push({ asset: 'plant_small', col: room.endCol, row: room.startRow })
+        break
+      case 'openspace':
+        items.push({ asset: 'printer', col: room.endCol - 1, row: room.endRow - 1 })
+        items.push({ asset: 'water_cooler', col: room.startCol, row: room.endRow - 1 })
+        items.push({ asset: 'plant_large', col: room.endCol - 1, row: room.startRow })
+        break
+      case 'biz':
+        items.push({ asset: 'bookshelf', col: room.endCol, row: room.startRow + 1 })
+        items.push({ asset: 'plant_small', col: room.endCol, row: room.endRow - 1 })
+        break
+      case 'qa':
+        items.push({ asset: 'printer', col: room.endCol - 1, row: room.endRow - 1 })
+        break
+      case 'meeting':
+      case 'meeting2':
+        items.push({ asset: 'meeting_table', col: midCol, row: Math.floor((room.startRow + room.endRow) / 2) })
+        items.push({ asset: 'plant_small', col: room.endCol, row: room.startRow })
+        break
+      case 'lounge': {
+        // Sofas at loungeSeats positions
+        const sofaSpots = room.loungeSeats ?? []
+        for (let i = 0; i < Math.min(sofaSpots.length, 8); i++) {
+          items.push({ asset: 'lounge_sofa', col: sofaSpots[i][0], row: sofaSpots[i][1] })
+        }
+        items.push({ asset: 'coffee_station', col: midCol, row: room.startRow + 1 })
+        items.push({ asset: 'water_cooler', col: midCol + 3, row: room.startRow + 1 })
+        items.push({ asset: 'plant_large', col: room.endCol - 1, row: room.startRow })
+        items.push({ asset: 'plant_small', col: room.startCol, row: room.startRow })
+        break
+      }
+      case 'manager':
+        for (const [col, row] of room.seats) {
+          items.push({ asset: 'manager_desk', col, row: row - 1 })
+        }
+        items.push({ asset: 'bookshelf', col: room.endCol, row: room.startRow + 1 })
+        items.push({ asset: 'plant_large', col: room.startCol, row: room.endRow - 1 })
+        break
+      case 'rnd':
+        items.push({ asset: 'server_rack', col: room.endCol - 1, row: room.endRow - 1 })
+        items.push({ asset: 'plant_small', col: room.startCol, row: room.startRow })
+        break
+      case 'training':
+        items.push({ asset: 'plant_small', col: room.endCol, row: room.startRow })
+        break
+      case 'library':
+        items.push({ asset: 'bookshelf', col: room.startCol + 1, row: room.startRow + 1 })
+        items.push({ asset: 'bookshelf', col: room.endCol - 1, row: room.startRow + 1 })
+        items.push({ asset: 'plant_small', col: midCol, row: room.startRow + 1 })
+        break
+    }
+
+    furn[room.id] = items
+  }
+  return furn
+}
+
+let ROOM_FURNITURE: Record<string, FurniturePlacement[]> = generateRoomFurniture()
+
+// Legacy compat — keep the old static structure shape (referenced below)
+const _legacyFurniture: Record<string, FurniturePlacement[]> = {
+  manager: [
+    { asset: 'manager_desk', col: 17, row: 15 },
+    { asset: 'bookshelf', col: 20, row: 15 },
+    { asset: 'plant_large', col: 15, row: 18 },
+  ],
+}
+
+// Image cache — v6 primary, v4 fallback
+const spriteCache: Record<string, HTMLImageElement> = {}
+const spriteSizes: Record<string, number> = {} // track native size for scaling
+let spritesInitialized = false
+
+// UI assets — signs, status icons, chat bubble
+const UI_BASE = '/assets/ui/v7'
+const UI_SIGNS: Record<string, string> = {
+  dev: 'signs/sign_dev.png',
+  biz: 'signs/sign_business.png',
+  qa: 'signs/sign_qa.png',
+  lounge: 'signs/sign_lounge.png',
+  reception: 'signs/sign_hq.png',
+}
+const UI_ICONS = ['status_active', 'status_idle', 'status_error', 'status_working', 'mug']
+const UI_MISC = ['chat_bubble']
+
+// Room sign → sprite mapping
+const ROOM_SIGN_SPRITE: Record<RoomId, string | null> = {
+  reception: 'sign_reception', dev: 'sign_dev', openspace: null,
+  biz: 'sign_biz', qa: 'sign_qa', meeting: null, meeting2: null,
+  lounge: 'sign_lounge', manager: null, rnd: null, training: null, library: null,
+}
+
+// Agent state → status icon mapping
+const STATE_ICON_MAP: Record<AgentState, string | null> = {
+  active: 'icon_status_active',
+  working: 'icon_status_working',
+  idle: 'icon_status_idle',
+  error: 'icon_status_error',
+  offline: null,
+}
+
+function preloadSprites() {
+  if (spritesInitialized) return
+  spritesInitialized = true
+
+  // Load v6 assets (64×64)
+  for (const name of V6_ASSETS) {
+    const img = new Image()
+    img.src = `${V6_BASE}/${name}.png`
+    spriteCache[name] = img
+    spriteSizes[name] = 64
+  }
+
+  // Load v4 fallbacks (128×128)
+  for (const name of V4_FALLBACK) {
+    if (!spriteCache[name]) {
+      const img = new Image()
+      img.src = `${V4_BASE}/${name}.png`
+      spriteCache[name] = img
+      spriteSizes[name] = 128
+    }
+  }
+
+  // Load UI signs
+  for (const [roomId, path] of Object.entries(UI_SIGNS)) {
+    const key = `sign_${roomId}`
+    const img = new Image()
+    img.src = `${UI_BASE}/${path}`
+    spriteCache[key] = img
+    spriteSizes[key] = roomId === 'reception' ? 128 : 64 // HQ sign is 128×32
+  }
+
+  // Load UI icons
+  for (const name of UI_ICONS) {
+    const key = `icon_${name}`
+    const img = new Image()
+    img.src = `${UI_BASE}/icons/${name}.png`
+    spriteCache[key] = img
+    spriteSizes[key] = 16
+  }
+
+  // Load chat bubble
+  for (const name of UI_MISC) {
+    const img = new Image()
+    img.src = `${UI_BASE}/${name}.png`
+    spriteCache[name] = img
+    spriteSizes[name] = 32
+  }
+
+  console.log(`[Assets] Preloading ${V6_ASSETS.length} v6 + ${V4_FALLBACK.length} v4 + ${Object.keys(UI_SIGNS).length + UI_ICONS.length + UI_MISC.length} UI sprites`)
+}
+
+function getSprite(name: string): HTMLImageElement | null {
+  const img = spriteCache[name]
+  return (img?.complete && img.naturalWidth > 0) ? img : null
+}
+
+function getSpriteNativeSize(name: string): number {
+  return spriteSizes[name] ?? 64
+}
+
+// Legacy decoration/furniture images (keep existing system working)
 const decoImages: Record<string, HTMLImageElement> = {}
 const furnitureImages: Record<string, HTMLImageElement> = {}
 let decoInitialized = false
@@ -645,8 +1250,8 @@ let decoInitialized = false
 function loadDecorations() {
   if (decoInitialized) return
   decoInitialized = true
+  preloadSprites() // also load v4 sprites
 
-  // Decoration sprites
   const decoTypes = [
     'alert_light', 'calendar', 'candle', 'clock', 'fan', 'headphones',
     'kanban_board', 'keyboard', 'lamp', 'monitor_wall', 'motivation_sign',
@@ -660,7 +1265,6 @@ function loadDecorations() {
     decoImages[t] = img
   }
 
-  // Furniture sprites
   const furnTypes = [
     'bookshelf', 'carpet', 'chair', 'chair_office', 'chair_simple',
     'coat_rack', 'coffee_machine', 'desk', 'desk_large', 'desk_l_shaped',
@@ -672,6 +1276,19 @@ function loadDecorations() {
     const img = new Image()
     img.src = `/assets/furniture/${t}.png`
     furnitureImages[t] = img
+  }
+
+  // Also load office/ subfolder assets
+  const officeTypes = [
+    'coffee_station', 'doormat', 'floor_carpet', 'floor_parquet',
+    'lamp_ceiling', 'lamp_desk', 'meeting_table', 'plant_cactus',
+    'plant_small', 'plant_succulent', 'plant_tall', 'printer',
+    'reception_desk', 'wall_art', 'wall_window', 'water_cooler', 'whiteboard',
+  ]
+  for (const t of officeTypes) {
+    const img = new Image()
+    img.src = `/assets/furniture/office/${t}.png`
+    decoImages[`office_${t}`] = img
   }
 }
 
@@ -830,9 +1447,18 @@ function buildAgents(defs: AgentDef[]): AgentRuntime[] {
   FLOOR_MAP = generateFloorMap()
   WALLS = generateWalls()
   CUBICLE_POSITIONS = ROOMS.flatMap(r => r.seats)
+  ROOM_FURNITURE = generateRoomFurniture()
+  ROOM_WALLS = generateRoomWalls()
   loungeAssignments.clear()
+  workSeatAssignments.clear()
+  _occupiedTiles.clear()
 
-  console.log(`[Office] buildAgents: ${defs.length} agents, MAP ${MAP_COLS}x${MAP_ROWS}, rooms: ${ROOMS.map(r => r.id).join(', ')}`)
+  // Verify: total seats ≥ agent count
+  const totalSeats = ROOMS.reduce((sum, r) => sum + r.seats.length, 0)
+  if (totalSeats < defs.length) {
+    console.warn(`[Office] ⚠️ Not enough seats! ${totalSeats} seats for ${defs.length} agents`)
+  }
+  console.log(`[Office] buildAgents: ${defs.length} agents → ${currentOfficeSize} layout, ${MAP_COLS}×${MAP_ROWS}, ${ROOMS.length} rooms, ${totalSeats} seats`)
 
   return defs.map(def => {
     const { pos, room } = getTargetTileForAgent(def.id, def.state)
@@ -841,7 +1467,7 @@ function buildAgents(defs: AgentDef[]): AgentRuntime[] {
 }
 
 // ── Generic sprite bank ──
-const GENERIC_SPRITE_COUNT = 11
+const GENERIC_SPRITE_COUNT = 31  // v8: generic-1..11 (legacy) + generic-12..31 (new)
 const genericSpriteImages: HTMLImageElement[] = []
 let genericsLoaded = false
 
@@ -853,7 +1479,7 @@ function loadGenericSprites() {
     img.src = `/assets/characters/generic-${i}-idle.png`
     genericSpriteImages.push(img)
 
-    // Also load generic sitting sprites
+    // Sitting sprites
     const workImg = new Image()
     workImg.src = `/assets/characters/generic-${i}-sitting-work.png`
     workImg.onload = () => { sittingFrameCounts[`generic-${i}-work`] = Math.max(1, Math.floor(workImg.naturalWidth / SPRITE_SIZE)) }
@@ -863,6 +1489,23 @@ function loadGenericSprites() {
     loungeImg.src = `/assets/characters/generic-${i}-sitting-lounge.png`
     loungeImg.onload = () => { sittingFrameCounts[`generic-${i}-lounge`] = Math.max(1, Math.floor(loungeImg.naturalWidth / SPRITE_SIZE)) }
     sittingSprites[`generic-${i}-lounge`] = loungeImg
+
+    // Walk + shadow sprites (v8 generics have these)
+    const walkImg = new Image()
+    walkImg.src = `/assets/characters/generic-${i}-walk.png`
+    walkImg.onload = () => {
+      if (walkImg.naturalWidth > 0) {
+        walkSprites[`generic-${i}`] = walkImg
+        walkFrameCounts[`generic-${i}`] = Math.max(1, Math.floor(walkImg.naturalWidth / SPRITE_SIZE))
+        walkHasSwRow[`generic-${i}`] = walkImg.naturalHeight >= SPRITE_SIZE * 2
+      }
+    }
+    walkImg.onerror = () => {}
+
+    const shadowImg = new Image()
+    shadowImg.src = `/assets/characters/generic-${i}-shadow.png`
+    shadowImg.onerror = () => {}
+    shadowSprites[`generic-${i}`] = shadowImg
   }
 }
 
@@ -896,68 +1539,134 @@ const walkHasSwRow: Record<string, boolean> = {} // true if sprite has 2 rows (6
 
 const SPRITE_ALIASES: Record<string, string> = { main: 'yogi' }
 
+// v7 character sprites: 64×64 per frame, separate files per pose
+// Shadow sprites: {id}-shadow.png (40×12 ellipse)
+const shadowSprites: Record<string, HTMLImageElement> = {}
+// Track which agents use v7 (64×64) vs legacy (32×32) sprites
+const spriteIsV7: Set<string> = new Set()
+
+/** Get sprite frame size for an agent (v7=64, legacy=32) */
+function getCharSpriteSize(agentId: string): number {
+  return spriteIsV7.has(agentId) ? 64 : SPRITE_SIZE
+}
+
 function loadSpritesForAgents(defs: AgentDef[]) {
   loadGenericSprites()
   defs.forEach(agent => {
     const spriteId = SPRITE_ALIASES[agent.id] ?? agent.id
 
-    // Load idle sprite
+    // Load idle sprite — try v7 first, then legacy
     if (!spriteImages[agent.id] && !spriteFailed.has(agent.id)) {
       const img = new Image()
-      img.onerror = () => { spriteFailed.add(agent.id); delete spriteImages[agent.id] }
+      img.onerror = () => {
+        // v7 failed — try legacy path
+        const legacyImg = new Image()
+        legacyImg.onerror = () => { spriteFailed.add(agent.id) }
+        legacyImg.onload = () => {
+          if (legacyImg.naturalWidth > 0) {
+            spriteImages[agent.id] = legacyImg
+            spriteResolved[agent.id] = legacyImg
+            spriteFrameCounts[agent.id] = Math.max(1, Math.floor(legacyImg.naturalWidth / SPRITE_SIZE))
+          }
+        }
+        legacyImg.src = `/assets/characters/${spriteId}-idle.png`
+      }
       img.onload = () => {
         if (img.naturalWidth > 0) {
+          spriteIsV7.add(agent.id)
           spriteResolved[agent.id] = img
-          spriteFrameCounts[agent.id] = Math.max(1, Math.floor(img.naturalWidth / SPRITE_SIZE))
+          spriteFrameCounts[agent.id] = Math.max(1, Math.floor(img.naturalWidth / 64))
         } else {
           spriteFailed.add(agent.id)
         }
       }
-      img.src = `/assets/characters/${spriteId}-idle.png`
+      img.src = `/assets/characters/v7/${spriteId}-idle.png`
       spriteImages[agent.id] = img
     }
 
-    // Load sitting-work sprite
+    // Load sitting-work sprite — v7 then legacy
     const workKey = `${agent.id}-work`
     if (!sittingSprites[workKey]) {
       const img = new Image()
       img.onload = () => {
         if (img.naturalWidth > 0) {
-          sittingFrameCounts[workKey] = Math.max(1, Math.floor(img.naturalWidth / SPRITE_SIZE))
+          const sz = spriteIsV7.has(agent.id) ? 64 : SPRITE_SIZE
+          sittingFrameCounts[workKey] = Math.max(1, Math.floor(img.naturalWidth / sz))
         }
       }
-      img.onerror = () => { /* silent — fallback to idle */ }
-      img.src = `/assets/characters/${spriteId}-sitting-work.png`
+      img.onerror = () => {
+        // Try legacy
+        const legacyImg = new Image()
+        legacyImg.onload = () => {
+          if (legacyImg.naturalWidth > 0) {
+            sittingSprites[workKey] = legacyImg
+            sittingFrameCounts[workKey] = Math.max(1, Math.floor(legacyImg.naturalWidth / SPRITE_SIZE))
+          }
+        }
+        legacyImg.onerror = () => {}
+        legacyImg.src = `/assets/characters/${spriteId}-sitting-work.png`
+      }
+      img.src = `/assets/characters/v7/${spriteId}-sitting-work.png`
       sittingSprites[workKey] = img
     }
 
-    // Load sitting-lounge sprite
+    // Load sitting-lounge sprite — v7 then legacy
     const loungeKey = `${agent.id}-lounge`
     if (!sittingSprites[loungeKey]) {
       const img = new Image()
       img.onload = () => {
         if (img.naturalWidth > 0) {
-          sittingFrameCounts[loungeKey] = Math.max(1, Math.floor(img.naturalWidth / SPRITE_SIZE))
+          const sz = spriteIsV7.has(agent.id) ? 64 : SPRITE_SIZE
+          sittingFrameCounts[loungeKey] = Math.max(1, Math.floor(img.naturalWidth / sz))
         }
       }
-      img.onerror = () => { /* silent — fallback to idle */ }
-      img.src = `/assets/characters/${spriteId}-sitting-lounge.png`
+      img.onerror = () => {
+        const legacyImg = new Image()
+        legacyImg.onload = () => {
+          if (legacyImg.naturalWidth > 0) {
+            sittingSprites[loungeKey] = legacyImg
+            sittingFrameCounts[loungeKey] = Math.max(1, Math.floor(legacyImg.naturalWidth / SPRITE_SIZE))
+          }
+        }
+        legacyImg.onerror = () => {}
+        legacyImg.src = `/assets/characters/${spriteId}-sitting-lounge.png`
+      }
+      img.src = `/assets/characters/v7/${spriteId}-sitting-lounge.png`
       sittingSprites[loungeKey] = img
     }
 
-    // Load cubicle sprite (personalized desk+monitor for work zone)
-        // Load walk sprite
+    // Load walk sprite — v7 then legacy
     if (!walkSprites[agent.id]) {
       const img = new Image()
       img.onload = () => {
         if (img.naturalWidth > 0) {
-          walkFrameCounts[agent.id] = Math.max(1, Math.floor(img.naturalWidth / SPRITE_SIZE))
-          walkHasSwRow[agent.id] = img.naturalHeight >= SPRITE_SIZE * 2
+          const sz = spriteIsV7.has(agent.id) ? 64 : SPRITE_SIZE
+          walkFrameCounts[agent.id] = Math.max(1, Math.floor(img.naturalWidth / sz))
+          walkHasSwRow[agent.id] = img.naturalHeight >= sz * 2
         }
       }
-      img.onerror = () => { /* silent — fallback to idle */ }
-      img.src = `/assets/characters/${spriteId}-walk.png`
+      img.onerror = () => {
+        const legacyImg = new Image()
+        legacyImg.onload = () => {
+          if (legacyImg.naturalWidth > 0) {
+            walkSprites[agent.id] = legacyImg
+            walkFrameCounts[agent.id] = Math.max(1, Math.floor(legacyImg.naturalWidth / SPRITE_SIZE))
+            walkHasSwRow[agent.id] = legacyImg.naturalHeight >= SPRITE_SIZE * 2
+          }
+        }
+        legacyImg.onerror = () => {}
+        legacyImg.src = `/assets/characters/${spriteId}-walk.png`
+      }
+      img.src = `/assets/characters/v7/${spriteId}-walk.png`
       walkSprites[agent.id] = img
+    }
+
+    // Load shadow sprite (v7 only)
+    if (!shadowSprites[agent.id]) {
+      const img = new Image()
+      img.onerror = () => {} // no shadow is fine
+      img.src = `/assets/characters/v7/${spriteId}-shadow.png`
+      shadowSprites[agent.id] = img
     }
   })
 }
@@ -1013,7 +1722,21 @@ function drawIsoTile(
   const hw = TILE_W / 2
   const hh = TILE_H / 2
 
-  // Diamond path
+  // Try sprite-based floor first
+  const spriteName = FLOOR_SPRITE_MAP[floorType]
+  const spriteImg = spriteName ? getSprite(spriteName) : null
+
+  if (spriteImg) {
+    // Draw sprite scaled to tile size — v6 is 64×64, v4 is 128×128
+    const native = getSpriteNativeSize(spriteName!)
+    const scale = TILE_W / native
+    const drawW = native * scale
+    const drawH = native * scale
+    ctx.drawImage(spriteImg, sx - drawW / 2, sy - drawH / 2, drawW, drawH)
+    return
+  }
+
+  // Fallback: flat color diamond
   ctx.beginPath()
   ctx.moveTo(sx, sy - hh)
   ctx.lineTo(sx + hw, sy)
@@ -1021,19 +1744,17 @@ function drawIsoTile(
   ctx.lineTo(sx - hw, sy)
   ctx.closePath()
 
-  // Checkerboard pattern with floor type colors
   const [c1, c2] = FLOOR_STYLES[floorType] ?? FLOOR_STYLES[0]
   const isDark = (col + row) % 2 === 0
   ctx.fillStyle = isDark ? c1 : c2
   ctx.fill()
 
-  // Subtle grid lines
   ctx.strokeStyle = 'rgba(255,255,255,0.04)'
   ctx.lineWidth = 0.5
   ctx.stroke()
 
-  // Wood grain texture for work zone (type 0)
-  if (floorType === 0) {
+  // Wood grain texture for type 0/8
+  if (floorType === 0 || floorType === 8) {
     ctx.save()
     ctx.clip()
     ctx.strokeStyle = 'rgba(255,255,255,0.03)'
@@ -1047,8 +1768,8 @@ function drawIsoTile(
     ctx.restore()
   }
 
-  // Carpet texture for lounge (type 2)
-  if (floorType === 2) {
+  // Carpet texture for types 2, 6, 7
+  if (floorType === 2 || floorType === 6 || floorType === 7) {
     ctx.save()
     ctx.clip()
     ctx.fillStyle = 'rgba(255,255,255,0.02)'
@@ -1380,11 +2101,18 @@ function drawAgent(
     ctx.stroke()
   }
 
-  // Shadow
-  ctx.beginPath()
-  ctx.ellipse(sx, sy + 4, 14, 6, 0, 0, Math.PI * 2)
-  ctx.fillStyle = 'rgba(0,0,0,0.3)'
-  ctx.fill()
+  // Shadow — use v7 shadow sprite if available, else fallback ellipse
+  const shadowImg = shadowSprites[agent.def.id]
+  if (shadowImg?.complete && shadowImg.naturalWidth > 0) {
+    ctx.globalAlpha = (isOffline ? 0.4 : 1) * 0.35
+    ctx.drawImage(shadowImg, Math.round(sx - 20), Math.round(sy - 2), 40, 12)
+    ctx.globalAlpha = isOffline ? 0.4 : 1
+  } else {
+    ctx.beginPath()
+    ctx.ellipse(sx, sy + 4, 14, 6, 0, 0, Math.PI * 2)
+    ctx.fillStyle = 'rgba(0,0,0,0.3)'
+    ctx.fill()
+  }
 
   // Breathing disabled — caused sub-pixel flicker on pixel art sprites
   const breathOffset = 0
@@ -1407,12 +2135,14 @@ function drawAgent(
     let maxFrames: number
     let fps: number
 
+    const charSz = getCharSpriteSize(agent.def.id)
+
     if (useWalk) {
-      // Walk sprite: 6 frames per row, row 0 = SE, row 1 = SW
+      // Walk sprite: frames per row, row 0 = SE, row 1 = SW
       fps = 8
-      maxFrames = walkFrameCounts[agent.def.id] ?? 6
+      maxFrames = walkFrameCounts[agent.def.id] ?? 4
       const frame = Math.floor(t * fps) % maxFrames
-      srcX = frame * SPRITE_SIZE
+      srcX = frame * charSz
 
       // Direction: determine from movement toward current waypoint (or target)
       const wp = agent.path?.waypoints[agent.path.currentWaypoint]
@@ -1420,14 +2150,14 @@ function drawAgent(
       const dy = (wp ? wp[1] : agent.ty) - agent.y
       const movingSW = dx < -0.1 || (Math.abs(dx) < 0.1 && dy > 0.1)
       if (movingSW && walkHasSwRow[agent.def.id]) {
-        srcY = SPRITE_SIZE // Second row = SW direction
+        srcY = charSz // Second row = SW direction
       }
     } else {
       // Non-walk sprite (idle/sitting)
       fps = pose === 'sitting-work' ? 4 : pose === 'sitting-lounge' ? 2 : (agent.def.state === 'working' || agent.def.state === 'active') ? 8 : 4
-      maxFrames = Math.max(1, Math.floor(img.naturalWidth / SPRITE_SIZE))
+      maxFrames = Math.max(1, Math.floor(img.naturalWidth / charSz))
       const frame = Math.floor(t * fps) % maxFrames
-      srcX = frame * SPRITE_SIZE
+      srcX = frame * charSz
     }
 
     // Math.round prevents sub-pixel blur on pixel art
@@ -1437,7 +2167,7 @@ function drawAgent(
     ctx.imageSmoothingEnabled = false
     ctx.drawImage(
       img,
-      srcX, srcY, SPRITE_SIZE, SPRITE_SIZE,
+      srcX, srcY, charSz, charSz,
       drawX, drawY, SPRITE_DISPLAY, SPRITE_DISPLAY,
     )
     ctx.imageSmoothingEnabled = true
@@ -1490,6 +2220,56 @@ function drawAgent(
   ctx.arc(dotX, dotY, 3.5, 0, Math.PI * 2)
   ctx.fillStyle = STATE_META[agent.def.state].color
   ctx.fill()
+
+  // ── Status icon sprite above head ──
+  const stateIconKey = STATE_ICON_MAP[agent.def.state]
+  if (stateIconKey) {
+    const iconSprite = getSprite(stateIconKey)
+    if (iconSprite) {
+      const iconSize = 16
+      const iconX = Math.round(sx - iconSize / 2)
+      const iconY = Math.round(sy - SPRITE_DISPLAY - iconSize + 4 + breathOffset + sitOffset)
+      // Pulsing effect for idle/error
+      const pulse = (agent.def.state === 'idle' || agent.def.state === 'error')
+        ? 0.7 + 0.3 * Math.sin(t * 4) : 1
+      ctx.globalAlpha = (isOffline ? 0.4 : 1) * pulse
+      ctx.imageSmoothingEnabled = false
+      ctx.drawImage(iconSprite, iconX, iconY, iconSize, iconSize)
+      ctx.imageSmoothingEnabled = true
+      ctx.globalAlpha = isOffline ? 0.4 : 1
+    }
+  }
+
+  // Coffee mug for idle agents in lounge
+  if (agent.def.state === 'idle' && agent.room === 'lounge') {
+    const mugSprite = getSprite('icon_mug')
+    if (mugSprite) {
+      ctx.imageSmoothingEnabled = false
+      ctx.drawImage(mugSprite, Math.round(sx + 12), Math.round(sy - 20 + sitOffset), 12, 12)
+      ctx.imageSmoothingEnabled = true
+    }
+  }
+
+  // ── Mood emoji — expression based on agent state ──
+  const moodMap: Record<AgentState, string> = {
+    working: '😤',   // focused / determined
+    active: '😊',    // happy / engaged
+    idle: '😴',      // sleepy
+    offline: '💤',   // zzz
+    error: '😰',     // stressed
+  }
+  const mood = moodMap[agent.def.state]
+  if (mood && !isOffline) {
+    const moodX = Math.round(sx + 18)
+    const moodY = Math.round(sy - SPRITE_DISPLAY + 14 + breathOffset + sitOffset)
+    // Gentle bobbing animation
+    const bob = Math.sin(t * 2.5 + agent.x * 3) * 2
+    ctx.font = '12px serif'
+    ctx.textAlign = 'center'
+    ctx.globalAlpha = 0.85
+    ctx.fillText(mood, moodX, moodY + bob)
+    ctx.globalAlpha = 1
+  }
 
   // ── Task label — speech bubble above every agent showing current task ──
   if (agent.def.task) {
@@ -1672,6 +2452,7 @@ function drawScene(
   editState?: EditState,
   allAgentDefs?: AgentDef[],
   i18nLabels?: I18nLabels,
+  isNightMode?: boolean,
 ) {
   const f = fonts ?? getCanvasFontSizes('desktop')
   const decos = decorations ?? DEFAULT_DECORATIONS.map(d => ({ ...d, _id: 0 }))
@@ -1694,15 +2475,32 @@ function drawScene(
   const labels: I18nLabels = i18nLabels ?? { loungeZone: '☕ Lounge', workZone: '💻 Work Zone', errorZone: '🐛 Errors', virtualOffice: '🏢 Virtual Office', active: 'Active', working: 'Working', idle: 'Idle', offline: 'Offline', error: 'Error', editMode: 'Edit Mode' }
   ctx.fillText(labels.virtualOffice, w / 2, 28)
 
-  // Room signs — draw sign at each room's top-center
-  ctx.font = `${f.zone}px "Heebo", "Segoe UI", sans-serif`
-  ctx.fillStyle = 'rgba(255,255,255,0.3)'
+  // Room signs — sprite signs if available, text fallback
   for (const room of ROOMS) {
     if (!room.sign) continue
     const signCol = (room.startCol + room.endCol) / 2
     const signRow = room.startRow
-    const [sx, sy] = toIso(signCol, signRow)
-    ctx.fillText(room.sign, ox + sx, oy + sy - 6)
+    const [signIx, signIy] = toIso(signCol, signRow)
+    const signX = ox + signIx
+    const signY = oy + signIy
+
+    const signKey = ROOM_SIGN_SPRITE[room.id]
+    const signSprite = signKey ? getSprite(signKey) : null
+
+    if (signSprite) {
+      // Sprite sign — draw above the room's top wall
+      const signW = room.id === 'reception' ? 96 : 48  // HQ sign wider
+      const signH = room.id === 'reception' ? 24 : 24
+      ctx.imageSmoothingEnabled = false
+      ctx.drawImage(signSprite, Math.round(signX - signW / 2), Math.round(signY - signH - 8), signW, signH)
+      ctx.imageSmoothingEnabled = true
+    } else {
+      // Text fallback
+      ctx.font = `${f.zone}px "Heebo", "Segoe UI", sans-serif`
+      ctx.fillStyle = 'rgba(255,255,255,0.3)'
+      ctx.textAlign = 'center'
+      ctx.fillText(room.sign, signX, signY - 6)
+    }
   }
 
   // --- Floor tilemap --- (use FLOOR_MAP dimensions, not MAP_ROWS/COLS, to avoid stale mismatch)
@@ -1769,10 +2567,98 @@ function drawScene(
 
   // (sofas removed per Tal's request)
   // Coffee area in bottom-right empty space
-  // Lounge furniture — coffee area
+  // ── Room furniture from v4 sprites ──
+  for (const room of ROOMS) {
+    const placements = ROOM_FURNITURE[room.id] ?? []
+    for (const fp of placements) {
+      const sprite = getSprite(fp.asset)
+      const [fIx, fIy] = toIso(fp.col, fp.row)
+      const fsx = ox + fIx
+      const fsy = oy + fIy
+      const scale = fp.scale ?? 1
+      drawables.push({ sortY: fp.col + fp.row, draw: () => {
+        if (sprite) {
+          // Draw sprite: v6=64×64, v4=128×128 — scale to tile size
+          const native = getSpriteNativeSize(fp.asset)
+          const spriteScale = (TILE_W / native) * scale
+          const drawW = native * spriteScale
+          const drawH = native * spriteScale
+          ctx.drawImage(sprite, fsx - drawW / 2, fsy - drawH + TILE_H / 2, drawW, drawH)
+        } else {
+          // Fallback: small colored diamond placeholder
+          const [c1] = FLOOR_STYLES[room.floorType] ?? FLOOR_STYLES[0]
+          ctx.globalAlpha = 0.5
+          ctx.fillStyle = c1
+          ctx.beginPath()
+          ctx.moveTo(fsx, fsy - 8)
+          ctx.lineTo(fsx + 12, fsy)
+          ctx.lineTo(fsx, fsy + 8)
+          ctx.lineTo(fsx - 12, fsy)
+          ctx.closePath()
+          ctx.fill()
+          ctx.globalAlpha = 1
+          // Label
+          ctx.font = '7px "Heebo", sans-serif'
+          ctx.fillStyle = 'rgba(255,255,255,0.3)'
+          ctx.textAlign = 'center'
+          ctx.fillText(fp.asset.replace(/_/g, ' '), fsx, fsy + 14)
+        }
+      }})
+    }
+  }
+
+  // ── Room wall sprites ──
+  for (const seg of ROOM_WALLS) {
+    // Try oriented sprite (wall_plain_north), fall back to base (wall_plain)
+    const wallSprite = getSprite(seg.sprite) ?? getSprite(seg.sprite.replace(/_north$|_east$/, ''))
+    const [wIx, wIy] = toIso(seg.col, seg.row)
+    const wsx = ox + wIx
+    const wsy = oy + wIy
+    if (seg.side === 'top') {
+      drawables.push({ sortY: seg.col + seg.row - 1, draw: () => {
+        if (wallSprite) {
+          const native = getSpriteNativeSize(seg.sprite)
+          const wScale = TILE_W / native
+          const drawW = native * wScale
+          const drawH = native * wScale
+          ctx.drawImage(wallSprite, wsx - drawW / 2, wsy - drawH + TILE_H / 4, drawW, drawH)
+        } else {
+          // Fallback: thin isometric wall line
+          ctx.strokeStyle = 'rgba(255,255,255,0.15)'
+          ctx.lineWidth = 2
+          ctx.beginPath()
+          ctx.moveTo(wsx - TILE_W / 2, wsy)
+          ctx.lineTo(wsx, wsy - TILE_H / 2)
+          ctx.lineTo(wsx + TILE_W / 2, wsy)
+          ctx.stroke()
+        }
+      }})
+    } else if (seg.side === 'left') {
+      drawables.push({ sortY: seg.col + seg.row - 0.5, draw: () => {
+        if (wallSprite) {
+          const native2 = getSpriteNativeSize(seg.sprite)
+          const wScale2 = TILE_W / native2
+          const drawW2 = native2 * wScale2
+          const drawH2 = native2 * wScale2
+          ctx.drawImage(wallSprite, wsx - drawW2, wsy - drawH2 / 2, drawW2, drawH2)
+        } else {
+          ctx.strokeStyle = 'rgba(255,255,255,0.1)'
+          ctx.lineWidth = 2
+          ctx.beginPath()
+          ctx.moveTo(wsx - TILE_W / 2, wsy)
+          ctx.lineTo(wsx, wsy + TILE_H / 2)
+          ctx.stroke()
+        }
+      }})
+    }
+  }
+
+  // Lounge furniture — coffee area (procedural fallback)
   const lounge = ROOM_MAP.get('lounge')!
-  drawables.push({ sortY: lounge.startCol + 3 + lounge.startRow + 1, draw: () => drawCoffeeTable(ctx, ox, oy, lounge.startCol + 3, lounge.startRow + 1) })
-  drawables.push({ sortY: lounge.startCol + 1 + lounge.startRow + 1, draw: () => drawCoffeeMachine(ctx, ox, oy, lounge.startCol + 1, lounge.startRow + 1) })
+  if (!getSprite('coffee_station')) {
+    drawables.push({ sortY: lounge.startCol + 3 + lounge.startRow + 1, draw: () => drawCoffeeTable(ctx, ox, oy, lounge.startCol + 3, lounge.startRow + 1) })
+    drawables.push({ sortY: lounge.startCol + 1 + lounge.startRow + 1, draw: () => drawCoffeeMachine(ctx, ox, oy, lounge.startCol + 1, lounge.startRow + 1) })
+  }
 
   // Draw name labels at each agent's FIXED work + lounge spot
   const allDefs = allAgentDefs ?? []
@@ -1860,6 +2746,173 @@ function drawScene(
     ctx.fillStyle = 'rgba(150,150,255,0.6)'
     ctx.fillText(labels.editMode || 'Edit Mode', w / 2, 50)
   }
+
+  // ── Hover Tooltip — detailed info popup on hover ──
+  if (hoverAgentId) {
+    const hoverAgent = agents.find(a => a.def.id === hoverAgentId)
+    if (hoverAgent) {
+      const [hix, hiy] = toIso(hoverAgent.x, hoverAgent.y)
+      const hsx = ox + hix
+      const hsy = oy + hiy
+
+      const known = KNOWN_AGENTS[hoverAgent.def.id]
+      const name = hoverAgent.def.name
+      const role = known?.role || 'Agent'
+      const state = hoverAgent.def.state
+      const stateLabel = STATE_META[state]?.label || state
+      const stateColor = STATE_META[state]?.color || '#888'
+      const room = ROOM_MAP.get(hoverAgent.room)
+      const roomLabel = room ? `${room.emoji} ${room.label}` : ''
+      const task = hoverAgent.def.task ? shortTask(hoverAgent.def.task) : ''
+
+      // Tooltip dimensions
+      ctx.font = 'bold 11px "Heebo", sans-serif'
+      const nameW = ctx.measureText(`${name} — ${role}`).width
+      ctx.font = '10px "Heebo", sans-serif'
+      const taskW = task ? ctx.measureText(task).width : 0
+      const tipW = Math.max(nameW, taskW) + 20
+      const tipH = task ? 58 : 42
+      const tipX = Math.round(hsx - tipW / 2)
+      const tipY = Math.round(hsy - SPRITE_DISPLAY - tipH - 20)
+
+      // Background
+      ctx.fillStyle = 'rgba(15, 18, 28, 0.92)'
+      ctx.beginPath()
+      ctx.roundRect(tipX, tipY, tipW, tipH, 6)
+      ctx.fill()
+      ctx.strokeStyle = `${stateColor}55`
+      ctx.lineWidth = 1
+      ctx.stroke()
+
+      // Arrow
+      ctx.fillStyle = 'rgba(15, 18, 28, 0.92)'
+      ctx.beginPath()
+      ctx.moveTo(hsx - 5, tipY + tipH)
+      ctx.lineTo(hsx + 5, tipY + tipH)
+      ctx.lineTo(hsx, tipY + tipH + 5)
+      ctx.closePath()
+      ctx.fill()
+
+      // Name + role
+      ctx.font = 'bold 11px "Heebo", sans-serif'
+      ctx.textAlign = 'left'
+      ctx.fillStyle = '#eee'
+      ctx.fillText(`${name} — ${role}`, tipX + 10, tipY + 16)
+
+      // State + room
+      ctx.font = '10px "Heebo", sans-serif'
+      ctx.fillStyle = stateColor
+      ctx.fillText(`● ${stateLabel}`, tipX + 10, tipY + 30)
+      ctx.fillStyle = 'rgba(255,255,255,0.5)'
+      ctx.fillText(roomLabel, tipX + 10 + ctx.measureText(`● ${stateLabel}  `).width, tipY + 30)
+
+      // Task
+      if (task) {
+        ctx.fillStyle = 'rgba(255,255,255,0.7)'
+        ctx.fillText(`📋 ${task}`, tipX + 10, tipY + 44)
+      }
+    }
+  }
+
+  // ── Mini-map — bird's eye view in bottom-left corner ──
+  const mmW = Math.min(160, w * 0.2)  // 20% of canvas width, max 160px
+  const mmH = mmW * (MAP_ROWS / MAP_COLS)
+  const mmX = 8
+  const mmY = h - mmH - 8
+  const mmTileW = mmW / MAP_COLS
+  const mmTileH = mmH / MAP_ROWS
+
+  // Background
+  ctx.fillStyle = 'rgba(10, 12, 18, 0.85)'
+  ctx.beginPath()
+  ctx.roundRect(mmX - 2, mmY - 2, mmW + 4, mmH + 4, 4)
+  ctx.fill()
+  ctx.strokeStyle = 'rgba(255,255,255,0.15)'
+  ctx.lineWidth = 1
+  ctx.stroke()
+
+  // Room tiles
+  for (const room of ROOMS) {
+    const [c1] = FLOOR_STYLES[room.floorType] ?? FLOOR_STYLES[0]
+    ctx.fillStyle = c1
+    ctx.fillRect(
+      mmX + room.startCol * mmTileW,
+      mmY + room.startRow * mmTileH,
+      (room.endCol - room.startCol + 1) * mmTileW,
+      (room.endRow - room.startRow + 1) * mmTileH,
+    )
+  }
+
+  // Agent dots
+  for (const agent of agents) {
+    const stateColor = STATE_META[agent.def.state]?.color || '#888'
+    const dotX = mmX + agent.x * mmTileW
+    const dotY = mmY + agent.y * mmTileH
+    ctx.beginPath()
+    ctx.arc(dotX, dotY, Math.max(2, mmTileW * 0.4), 0, Math.PI * 2)
+    ctx.fillStyle = agent.def.state === 'offline' ? 'rgba(100,100,100,0.4)' : stateColor
+    ctx.fill()
+  }
+
+  // Viewport indicator — approximate visible area from pan offset
+  if (isoW > 0 && isoH > 0) {
+    const vpLeft = Math.max(0, (-panX) / isoW * MAP_COLS)
+    const vpTop = Math.max(0, (-panY) / isoH * MAP_ROWS)
+    const vpCols = Math.min(MAP_COLS, w / isoW * MAP_COLS)
+    const vpRows = Math.min(MAP_ROWS, h / isoH * MAP_ROWS)
+    ctx.strokeStyle = 'rgba(255,255,255,0.5)'
+    ctx.lineWidth = 1
+    ctx.strokeRect(
+      mmX + vpLeft * mmTileW,
+      mmY + vpTop * mmTileH,
+      vpCols * mmTileW,
+      vpRows * mmTileH,
+    )
+  }
+
+  // Label
+  ctx.font = '8px "Heebo", sans-serif'
+  ctx.fillStyle = 'rgba(255,255,255,0.4)'
+  ctx.textAlign = 'left'
+  ctx.fillText(`${currentOfficeSize} · ${agents.length}/${activeLayout.maxAgents}`, mmX + 2, mmY - 4)
+
+  // ── Night mode overlay ──
+  if (isNightMode) {
+    // Dark blue-ish overlay simulating night lighting
+    ctx.save()
+    ctx.globalCompositeOperation = 'multiply'
+    ctx.fillStyle = '#1a1a3a'
+    ctx.fillRect(0, 0, w, h)
+    ctx.restore()
+
+    // Warm light circles around working agents (desk lamps)
+    ctx.save()
+    ctx.globalCompositeOperation = 'screen'
+    for (const agent of agents) {
+      if (agent.def.state === 'offline') continue
+      const [ax, ay] = toIso(agent.x, agent.y)
+      const sx = ox + ax
+      const sy = oy + ay - SPRITE_DISPLAY / 2
+      const radius = agent.def.state === 'working' || agent.def.state === 'active' ? 45 : 25
+      const gradient = ctx.createRadialGradient(sx, sy, 0, sx, sy, radius)
+      if (agent.def.state === 'working' || agent.def.state === 'active') {
+        gradient.addColorStop(0, 'rgba(255, 220, 150, 0.25)')
+        gradient.addColorStop(1, 'rgba(255, 220, 150, 0)')
+      } else {
+        gradient.addColorStop(0, 'rgba(200, 200, 255, 0.12)')
+        gradient.addColorStop(1, 'rgba(200, 200, 255, 0)')
+      }
+      ctx.fillStyle = gradient
+      ctx.fillRect(sx - radius, sy - radius, radius * 2, radius * 2)
+    }
+    ctx.restore()
+
+    // 🌙 moon icon top-right
+    ctx.font = '16px sans-serif'
+    ctx.fillStyle = 'rgba(255,255,200,0.4)'
+    ctx.textAlign = 'right'
+    ctx.fillText('🌙', w - 8, 20)
+  }
 }
 
 // ── Hit testing ──
@@ -1899,12 +2952,12 @@ function SettingsScreen({ onConnect, t, dir, toggleLang, lang, error }: {
   toggleLang: () => void
   lang: Lang
 }) {
-  const [token, setToken] = useState(localStorage.getItem('gateway-token') || '')
-  const [url, setUrl] = useState(localStorage.getItem('gateway-url') || 'http://127.0.0.1:18789')
+  const [token, setToken] = useState(sessionStorage.getItem('gateway-token') || '')
+  const [url, setUrl] = useState(sessionStorage.getItem('gateway-url') || 'http://127.0.0.1:18789')
 
   const handleConnect = () => {
-    localStorage.setItem('gateway-token', token)
-    localStorage.setItem('gateway-url', url)
+    sessionStorage.setItem('gateway-token', token)
+    sessionStorage.setItem('gateway-url', url)
     onConnect(token, url)
   }
 
@@ -2169,6 +3222,19 @@ export default function App() {
       return next
     })
   }, [])
+  // Night mode — darker ambient lighting
+  const [nightMode, setNightMode] = useState(() => localStorage.getItem('office-night') === 'true')
+  const nightModeRef = useRef(nightMode)
+  nightModeRef.current = nightMode
+  const toggleNightMode = useCallback(() => {
+    setNightMode(prev => {
+      const next = !prev
+      localStorage.setItem('office-night', String(next))
+      nightModeRef.current = next
+      return next
+    })
+  }, [])
+
   const [agentDefs, setAgentDefs] = useState<AgentDef[]>(DEFAULT_AGENT_DEFS)
   const agentDefsRef = useRef<AgentDef[]>(agentDefs)
   agentDefsRef.current = agentDefs
@@ -2202,6 +3268,11 @@ export default function App() {
   const prevUpdatedAtRef = useRef<Map<string, number>>(new Map())
   const lastDefsUpdateRef = useRef<number>(0)
 
+  // Seating overrides — drag & drop custom seat assignments
+  const seatingOverridesRef = useRef<Record<string, { room: string; col: number; row: number }>>({})
+  const [seatingLoaded, setSeatingLoaded] = useState(false)
+  const dragAgentRef = useRef<{ agentId: string; startX: number; startY: number } | null>(null)
+
   // Edit mode state
   const [editMode, setEditMode] = useState(false)
   const [decorations, setDecorations] = useState<DecorationWithId[]>(() => loadLayout())
@@ -2232,13 +3303,66 @@ export default function App() {
   // Notification state
   const [notifications, setNotifications] = useState<OfficeNotification[]>([])
   const prevStatesRef = useRef<Map<string, AgentState>>(new Map())
-  // Settings state
-  const [showSettings, setShowSettings] = useState(() => !localStorage.getItem('gateway-token'))
-  const [gatewayToken, setGatewayToken] = useState(() => localStorage.getItem('gateway-token') || '')
-  const [gatewayUrl, setGatewayUrl] = useState(() => localStorage.getItem('gateway-url') || 'http://127.0.0.1:18789')
+  // Viewer mode — read-only, no auth required
+  const isViewer = useState(() => new URLSearchParams(window.location.search).get('mode') === 'viewer')[0]
+  const [linkCopied, setLinkCopied] = useState(false)
+
+  // Settings state — skip in viewer mode
+  const [showSettings, setShowSettings] = useState(() => isViewer ? false : !sessionStorage.getItem('gateway-token'))
+  const [gatewayToken, setGatewayToken] = useState(() => sessionStorage.getItem('gateway-token') || '')
+  const [gatewayUrl, setGatewayUrl] = useState(() => sessionStorage.getItem('gateway-url') || 'http://127.0.0.1:18789')
+
+  // Auto-detect gateway token from backend (reads openclaw.json)
+  useEffect(() => {
+    if (isViewer) return
+    if (sessionStorage.getItem('gateway-token')) return // already have a token
+    const backendBase = window.location.port === '5173' ? 'http://localhost:3001' : window.location.origin
+    fetch(`${backendBase}/api/config`)
+      .then(r => r.json())
+      .then(data => {
+        if (data.token) {
+          sessionStorage.setItem('gateway-token', data.token)
+          setGatewayToken(data.token)
+          if (data.url) {
+            sessionStorage.setItem('gateway-url', data.url)
+            setGatewayUrl(data.url)
+          }
+          setShowSettings(false) // skip login screen!
+        }
+      })
+      .catch(() => { /* server not reachable — show manual settings */ })
+  }, [isViewer])
 
   // Dashboard mode toggle
   const [dashboardMode, setDashboardMode] = useState(false)
+  const [searchQuery, setSearchQuery] = useState('')
+  const [statusFilter, setStatusFilter] = useState<'all' | AgentState>('all')
+  const [showShortcuts, setShowShortcuts] = useState(false)
+  const searchInputRef = useRef<HTMLInputElement>(null)
+
+  // Agent grouping — persistent custom groups
+  const [agentGroups, setAgentGroups] = useState<Record<string, string>>(() => {
+    try { return JSON.parse(localStorage.getItem('agent-groups') || '{}') } catch { return {} }
+  })
+  const [groupNames, setGroupNames] = useState<string[]>(() => {
+    try { return JSON.parse(localStorage.getItem('agent-group-names') || '[]') } catch { return [] }
+  })
+  const [groupByEnabled, setGroupByEnabled] = useState(() => localStorage.getItem('agent-group-by') === 'true')
+  const [editingGroups, setEditingGroups] = useState(false)
+  const [newGroupName, setNewGroupName] = useState('')
+  const [dragGroupAgent, setDragGroupAgent] = useState<string | null>(null)
+  const [showExportMenu, setShowExportMenu] = useState(false)
+
+  // Persist groups
+  useEffect(() => {
+    localStorage.setItem('agent-groups', JSON.stringify(agentGroups))
+  }, [agentGroups])
+  useEffect(() => {
+    localStorage.setItem('agent-group-names', JSON.stringify(groupNames))
+  }, [groupNames])
+  useEffect(() => {
+    localStorage.setItem('agent-group-by', String(groupByEnabled))
+  }, [groupByEnabled])
 
   // Responsive breakpoint detection
   const [breakpoint, setBreakpoint] = useState<Breakpoint>(() => getBreakpoint(window.innerWidth))
@@ -2302,10 +3426,94 @@ export default function App() {
     return () => canvas.removeEventListener('wheel', handler)
   }, [])
 
-  // ── Live status polling from Gateway — discovers agents dynamically ──
-  const discoveredRef = useRef(false)
+  // ── Load seating overrides from backend ──
   useEffect(() => {
-    if (!gatewayToken) return // demo mode — use DEFAULT_AGENT_DEFS
+    const backendBase = window.location.port === '5173' ? 'http://localhost:3001' : ''
+    fetch(`${backendBase}/api/seating`)
+      .then(r => r.json())
+      .then(data => {
+        if (data.ok && data.assignments) {
+          seatingOverridesRef.current = data.assignments
+          _seatingOverrides = data.assignments
+          // Re-apply seating to existing agents
+          for (const a of agentsRef.current) {
+            const override = data.assignments[a.def.id]
+            if (override) {
+              a.tx = override.col
+              a.ty = override.row
+              a.x = override.col
+              a.y = override.row
+            }
+          }
+        }
+        setSeatingLoaded(true)
+      })
+      .catch(() => setSeatingLoaded(true))
+  }, [])
+
+  const discoveredRef = useRef(false)
+
+  // ── Viewer mode polling — public /api/agents endpoint ──
+  useEffect(() => {
+    if (!isViewer) return
+    let cancelled = false
+
+    async function pollViewerAgents() {
+      try {
+        const backendBase = window.location.port === '5173'
+          ? 'http://localhost:3001' : window.location.origin
+        const res = await fetch(`${backendBase}/api/agents`)
+        if (!res.ok || cancelled) return
+        const data = await res.json()
+        const agents: any[] = data.agents ?? []
+        if (agents.length === 0) return
+
+        const newDefs: AgentDef[] = agents.map((a: any, i: number) => ({
+          id: a.id ?? a.agentId ?? `agent-${i}`,
+          name: a.name ?? a.id ?? `Agent ${i}`,
+          role: a.role ?? 'Agent',
+          emoji: a.emoji ?? '🤖',
+          color: a.color ?? FALLBACK_COLORS[i % FALLBACK_COLORS.length],
+          frames: a.frames ?? 6,
+          state: (a.state ?? 'offline') as AgentState,
+          task: a.task ?? a.lastMessage ?? a.currentTask ?? '',
+          cubicleIndex: a.cubicleIndex ?? i,
+          lastUpdated: a.lastActivity ? new Date(a.lastActivity).getTime() : Date.now(),
+          sessionKey: a.sessionKey,
+        }))
+
+        setAgentDefs(newDefs)
+        if (!discoveredRef.current) {
+          discoveredRef.current = true
+          loadSpritesForAgents(newDefs)
+          agentsRef.current = buildAgents(newDefs)
+        } else {
+          // Update existing runtimes
+          for (const def of newDefs) {
+            const runtime = agentsRef.current.find(r => r.def.id === def.id)
+            if (runtime) {
+              const stateChanged = runtime.def.state !== def.state
+              Object.assign(runtime.def, def)
+              if (stateChanged) {
+                const { pos, room } = getTargetTileForAgent(def.id, def.state)
+                runtime.room = room
+                runtime.tx = pos[0]; runtime.ty = pos[1]
+              }
+            }
+          }
+        }
+        setAgentsLoaded(true)
+      } catch { /* viewer mode — silently retry */ }
+    }
+
+    pollViewerAgents()
+    const timer = setInterval(pollViewerAgents, 5000)
+    return () => { cancelled = true; clearInterval(timer) }
+  }, [isViewer])
+
+  // ── Live status polling from Gateway — discovers agents dynamically ──
+  useEffect(() => {
+    if (!gatewayToken || isViewer) return // demo mode or viewer mode
 
     async function pollGateway() {
       try {
@@ -2389,6 +3597,13 @@ export default function App() {
             return def
           })
           // All agents come from Gateway — no hardcoded additions needed
+          if (newDefs.length > MAX_AGENTS) {
+            setNotifications(prev => [...prev.slice(-(MAX_VISIBLE_NOTIFICATIONS - 1)), {
+              id: `cap-${Date.now()}`, agentName: '⚠️ Office', agentEmoji: '🏢',
+              message: `${newDefs.length} agents detected — max capacity is ${MAX_AGENTS}. Some agents may not have seats.`,
+              timestamp: Date.now(),
+            }])
+          }
           setAgentDefs(newDefs)
           loadSpritesForAgents(newDefs)
           agentsRef.current = buildAgents(newDefs)
@@ -2655,7 +3870,7 @@ export default function App() {
           : null,
       }
       const tr = i18nRef.current
-      drawScene(offCtx, w, h, t, agents, hoverAgentIdRef.current, selectedIdRef.current, panRef.current.x, panRef.current.y, fonts, decorationsRef.current, editState, agentDefsRef.current, { loungeZone: tr.loungeZone, workZone: tr.workZone, errorZone: tr.errorZone, virtualOffice: `🏢 ${tr.virtualOffice}`, active: tr.active, working: tr.working, idle: tr.idle, offline: tr.offline, error: tr.error, editMode: tr.editMode })
+      drawScene(offCtx, w, h, t, agents, hoverAgentIdRef.current, selectedIdRef.current, panRef.current.x, panRef.current.y, fonts, decorationsRef.current, editState, agentDefsRef.current, { loungeZone: tr.loungeZone, workZone: tr.workZone, errorZone: tr.errorZone, virtualOffice: `🏢 ${tr.virtualOffice}`, active: tr.active, working: tr.working, idle: tr.idle, offline: tr.offline, error: tr.error, editMode: tr.editMode }, nightModeRef.current)
 
       offCtx.restore()
 
@@ -2757,8 +3972,15 @@ export default function App() {
       }
     }
 
-    // Normal mode: start pan drag (middle click or left click on empty space)
+    // Normal mode: check if clicking an agent (for drag & drop seating)
     const agent = hitTestAgent(mx, my, agentsRef.current, ox, oy)
+    if (agent && editModeRef.current) {
+      // Start agent drag in edit mode
+      dragAgentRef.current = { agentId: agent.def.id, startX: mx, startY: my }
+      e.currentTarget.style.cursor = 'move'
+      e.preventDefault()
+      return
+    }
     if (!agent) {
       panDragRef.current = {
         startX: e.clientX,
@@ -2771,6 +3993,24 @@ export default function App() {
   }, [screenToCanvas])
 
   const handleMove = useCallback((e: React.MouseEvent<HTMLCanvasElement>) => {
+    // Agent drag (edit mode) — move agent sprite to follow cursor
+    if (dragAgentRef.current) {
+      const rect = e.currentTarget.getBoundingClientRect()
+      const [mx, my] = screenToCanvas(e.clientX, e.clientY, rect)
+      const { ox, oy } = originRef.current
+      // Convert screen to tile coords for agent position
+      const tileX = (mx - ox) / TILE_W + (my - oy) / TILE_H
+      const tileY = (my - oy) / TILE_H - (mx - ox) / TILE_W
+      const agent = agentsRef.current.find(a => a.def.id === dragAgentRef.current!.agentId)
+      if (agent) {
+        agent.x = tileX
+        agent.y = tileY
+        agent.path = null // cancel any active path
+      }
+      e.currentTarget.style.cursor = 'move'
+      return
+    }
+
     // Pan drag (normal mode)
     if (panDragRef.current) {
       const dx = (e.clientX - panDragRef.current.startX) / scaleRef.current
@@ -2828,6 +4068,36 @@ export default function App() {
   }, [screenToCanvas])
 
   const handleMouseUp = useCallback((e: React.MouseEvent<HTMLCanvasElement>) => {
+    // Agent drag drop — save new seating position
+    if (dragAgentRef.current) {
+      const agent = agentsRef.current.find(a => a.def.id === dragAgentRef.current!.agentId)
+      if (agent) {
+        const col = Math.round(agent.x)
+        const row = Math.round(agent.y)
+        const room = getRoomAt(col, row)
+        const roomId = room?.id ?? 'openspace'
+        // Snap to grid
+        agent.x = col
+        agent.y = row
+        agent.tx = col
+        agent.ty = row
+        agent.room = roomId
+        agent.path = null
+        // Save to backend
+        const override = { room: roomId, col, row }
+        seatingOverridesRef.current[agent.def.id] = override
+        _seatingOverrides[agent.def.id] = override
+        const backendBase = window.location.port === '5173' ? 'http://localhost:3001' : ''
+        fetch(`${backendBase}/api/seating`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ agentId: agent.def.id, ...override }),
+        }).catch(err => console.error('Failed to save seating:', err))
+      }
+      dragAgentRef.current = null
+      e.currentTarget.style.cursor = 'default'
+      return
+    }
     if (panDragRef.current) {
       const dx = Math.abs(e.clientX - panDragRef.current.startX)
       const dy = Math.abs(e.clientY - panDragRef.current.startY)
@@ -3003,18 +4273,96 @@ export default function App() {
 
   
 
-  // Escape key handler
+  // Filtered agents for search/filter
+  const filteredAgents = agentDefs.filter(a => {
+    if (statusFilter !== 'all' && a.state !== statusFilter) return false
+    if (!searchQuery) return true
+    const q = searchQuery.toLowerCase()
+    return a.name.toLowerCase().includes(q)
+      || a.id.toLowerCase().includes(q)
+      || a.role.toLowerCase().includes(q)
+      || a.task.toLowerCase().includes(q)
+  })
+
+  // Global keyboard shortcuts
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
+      const target = e.target as HTMLElement
+      const isInput = target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable
+
+      // Escape always works
       if (e.key === 'Escape') {
+        if (showExportMenu) { setShowExportMenu(false); return }
+        if (showShortcuts) { setShowShortcuts(false); return }
+        if (searchQuery) { setSearchQuery(''); setStatusFilter('all'); return }
+        if (selectedId) { setSelectedId(null); return }
         setEditMode(false)
         setPlacementType(null)
         setSelectedDecoId(null)
+        return
+      }
+
+      // Don't intercept when typing in inputs (except Escape above)
+      if (isInput) return
+
+      // / or Ctrl+K → focus search
+      if (e.key === '/' || (e.key === 'k' && (e.metaKey || e.ctrlKey))) {
+        e.preventDefault()
+        searchInputRef.current?.focus()
+        return
+      }
+
+      // ? → show shortcuts
+      if (e.key === '?') { setShowShortcuts(s => !s); return }
+
+      // D → toggle dashboard
+      if (e.key === 'd' || e.key === 'D') { setDashboardMode(m => !m); return }
+
+      // E → toggle edit mode
+      if (e.key === 'e' || e.key === 'E') { setEditMode(m => !m); return }
+
+      // G → toggle group view
+      if (e.key === 'g' || e.key === 'G') { setGroupByEnabled(g => !g); return }
+
+      // S → toggle sound
+      if (e.key === 's' || e.key === 'S') {
+        const nowEnabled = globalSound.toggle()
+        setSoundEnabled(nowEnabled)
+        return
+      }
+
+      // J/K or ←/→ → navigate agents
+      if (e.key === 'j' || e.key === 'J' || e.key === 'ArrowRight') {
+        e.preventDefault()
+        const list = filteredAgents
+        if (list.length === 0) return
+        const curIdx = selectedId ? list.findIndex(a => a.id === selectedId) : -1
+        const nextIdx = (curIdx + 1) % list.length
+        setSelectedId(list[nextIdx].id)
+        return
+      }
+      if (e.key === 'k' || e.key === 'K' || e.key === 'ArrowLeft') {
+        e.preventDefault()
+        const list = filteredAgents
+        if (list.length === 0) return
+        const curIdx = selectedId ? list.findIndex(a => a.id === selectedId) : 0
+        const prevIdx = (curIdx - 1 + list.length) % list.length
+        setSelectedId(list[prevIdx].id)
+        return
+      }
+
+      // 1-9 → select agent by index
+      if (e.key >= '1' && e.key <= '9') {
+        const idx = parseInt(e.key) - 1
+        if (idx < filteredAgents.length) {
+          setSelectedId(filteredAgents[idx].id)
+        }
+        return
       }
     }
     window.addEventListener('keydown', handler)
     return () => window.removeEventListener('keydown', handler)
-  }, [])
+  }, [selectedId, searchQuery, showShortcuts, filteredAgents, statusFilter])
 
   // Resolve backend base URL (dev vs prod)
   const getBackendBase = useCallback(() => {
@@ -3098,6 +4446,42 @@ export default function App() {
       .filter((m: ChatMessage) => m.text.length > 0)
       .filter(isVisibleMessage)
   }, [gatewayToken, gatewayUrl, getBackendBase])
+
+  // Export office as PNG
+  const handleExportPng = useCallback(() => {
+    const canvas = canvasRef.current
+    if (!canvas) return
+    const dataUrl = canvas.toDataURL('image/png')
+    const link = document.createElement('a')
+    link.download = `virtual-office-${new Date().toISOString().slice(0, 10)}.png`
+    link.href = dataUrl
+    link.click()
+    setShowExportMenu(false)
+  }, [])
+
+  // Export office as PDF
+  const handleExportPdf = useCallback(() => {
+    const canvas = canvasRef.current
+    if (!canvas) return
+    const dataUrl = canvas.toDataURL('image/png')
+    const w = canvas.width
+    const h = canvas.height
+    // Landscape or portrait based on aspect ratio
+    const orientation = w > h ? 'landscape' : 'portrait'
+    const pdf = new jsPDF({ orientation, unit: 'px', format: [w, h] })
+    pdf.addImage(dataUrl, 'PNG', 0, 0, w, h)
+
+    // Add agent status summary below image
+    const fontSize = Math.max(12, Math.min(16, w / 60))
+    pdf.setFontSize(fontSize)
+    const statusY = h - fontSize * 2
+    const summary = agentDefs.map(a => `${a.emoji} ${a.name}: ${a.state}${a.task ? ` — ${a.task}` : ''}`).join('  |  ')
+    pdf.setTextColor(200, 200, 200)
+    pdf.text(summary, w / 2, statusY, { align: 'center', maxWidth: w - 40 })
+
+    pdf.save(`virtual-office-${new Date().toISOString().slice(0, 10)}.pdf`)
+    setShowExportMenu(false)
+  }, [agentDefs])
 
   const selectedAgent = agentDefs.find(a => a.id === selectedId) ?? null
 
@@ -3217,8 +4601,8 @@ export default function App() {
         ))}
       </div>
 
-      {/* Settings gear icon */}
-      <button
+      {/* Settings gear icon — hidden in viewer mode */}
+      {!isViewer && <button
         onClick={() => setShowSettings(true)}
         style={{
           position: 'absolute', top: 12, left: 12,
@@ -3231,7 +4615,7 @@ export default function App() {
         title={t.settings}
       >
         ⚙️
-      </button>
+      </button>}
 
       {/* Sound toggle button */}
       <button
@@ -3273,11 +4657,29 @@ export default function App() {
         📊
       </button>
 
-      {/* Edit mode toggle button */}
+      {/* Night mode toggle */}
       <button
-        onClick={() => setEditMode(m => !m)}
+        onClick={toggleNightMode}
         style={{
           position: 'absolute', top: 12, left: 144,
+          background: nightMode ? 'rgba(30,30,80,0.9)' : 'rgba(30,30,55,0.8)',
+          border: '2px solid #3a3a5c', borderRadius: 0,
+          width: 36, height: 36, fontSize: 18,
+          cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center',
+          color: nightMode ? '#ffd' : '#aaa',
+          fontFamily: '"Heebo", "Segoe UI", sans-serif',
+          boxShadow: 'inset -2px -2px 0 #0a0a1a, inset 2px 2px 0 #2a2a4a',
+        }}
+        title={nightMode ? 'Day Mode' : 'Night Mode'}
+      >
+        {nightMode ? '🌙' : '☀️'}
+      </button>
+
+      {/* Edit mode toggle button — hidden in viewer mode */}
+      {!isViewer && <button
+        onClick={() => setEditMode(m => !m)}
+        style={{
+          position: 'absolute', top: 12, left: 188,
           background: editMode ? 'rgba(100,100,255,0.6)' : 'rgba(30,30,55,0.8)',
           border: '2px solid #3a3a5c', borderRadius: 0,
           padding: '6px 10px', fontSize: 9, cursor: 'pointer',
@@ -3287,7 +4689,103 @@ export default function App() {
         }}
       >
         {t.designOffice}
-      </button>
+      </button>}
+
+      {/* Share button — generates viewer URL */}
+      {!isViewer && (
+        <button
+          onClick={() => {
+            const url = new URL(window.location.href)
+            url.searchParams.set('mode', 'viewer')
+            navigator.clipboard.writeText(url.toString()).then(() => {
+              setLinkCopied(true)
+              setTimeout(() => setLinkCopied(false), 2000)
+            })
+          }}
+          style={{
+            position: 'absolute', top: 12, left: 304, zIndex: 20,
+            background: linkCopied ? 'rgba(74,222,128,0.4)' : 'rgba(30,30,55,0.8)',
+            border: '2px solid #3a3a5c', borderRadius: 0,
+            width: 36, height: 36, fontSize: 16,
+            cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center',
+            color: linkCopied ? '#4ade80' : '#aaa',
+            fontFamily: '"Heebo", "Segoe UI", sans-serif',
+            boxShadow: 'inset -2px -2px 0 #0a0a1a, inset 2px 2px 0 #2a2a4a',
+            transition: 'background 0.3s, color 0.3s',
+          }}
+          title={linkCopied ? t.linkCopied : t.share}
+        >
+          {linkCopied ? '✓' : '🔗'}
+        </button>
+      )}
+
+      {/* Viewer mode badge */}
+      {isViewer && (
+        <div style={{
+          position: 'absolute', top: 12, right: 12, zIndex: 20,
+          background: 'rgba(74,106,255,0.3)', border: '1px solid rgba(74,106,255,0.5)',
+          borderRadius: 6, padding: '4px 12px',
+          color: '#aac', fontSize: 12,
+          fontFamily: '"Heebo", "Segoe UI", sans-serif',
+        }}>
+          {t.viewerMode}
+        </div>
+      )}
+
+      {/* Export button with dropdown */}
+      <div style={{ position: 'absolute', top: 12, left: 260, zIndex: 20 }}>
+        <button
+          onClick={() => setShowExportMenu(m => !m)}
+          style={{
+            background: showExportMenu ? 'rgba(74,106,255,0.5)' : 'rgba(30,30,55,0.8)',
+            border: '2px solid #3a3a5c', borderRadius: 0,
+            width: 36, height: 36, fontSize: 16,
+            cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center',
+            color: showExportMenu ? '#fff' : '#aaa',
+            fontFamily: '"Heebo", "Segoe UI", sans-serif',
+            boxShadow: 'inset -2px -2px 0 #0a0a1a, inset 2px 2px 0 #2a2a4a',
+          }}
+          title={t.exportMenu}
+        >
+          📸
+        </button>
+        {showExportMenu && (
+          <div style={{
+            position: 'absolute', top: 40, left: 0,
+            background: 'rgba(30,30,55,0.95)', border: '2px solid #3a3a5c',
+            borderRadius: 0, padding: 4, minWidth: 140,
+            boxShadow: '0 8px 24px rgba(0,0,0,0.5)',
+            fontFamily: '"Heebo", "Segoe UI", sans-serif',
+          }}>
+            <button
+              onClick={handleExportPng}
+              style={{
+                display: 'block', width: '100%', padding: '8px 12px',
+                background: 'transparent', border: 'none', color: '#ccc',
+                fontSize: 12, cursor: 'pointer', textAlign: 'right',
+                fontFamily: '"Heebo", "Segoe UI", sans-serif',
+              }}
+              onMouseEnter={e => { e.currentTarget.style.background = 'rgba(74,106,255,0.2)' }}
+              onMouseLeave={e => { e.currentTarget.style.background = 'transparent' }}
+            >
+              🖼️ {t.exportImage}
+            </button>
+            <button
+              onClick={handleExportPdf}
+              style={{
+                display: 'block', width: '100%', padding: '8px 12px',
+                background: 'transparent', border: 'none', color: '#ccc',
+                fontSize: 12, cursor: 'pointer', textAlign: 'right',
+                fontFamily: '"Heebo", "Segoe UI", sans-serif',
+              }}
+              onMouseEnter={e => { e.currentTarget.style.background = 'rgba(74,106,255,0.2)' }}
+              onMouseLeave={e => { e.currentTarget.style.background = 'transparent' }}
+            >
+              📄 {t.exportPdf}
+            </button>
+          </div>
+        )}
+      </div>
 
       {/* Edit mode toolbar */}
       {editMode && (
@@ -3380,7 +4878,7 @@ export default function App() {
           alignContent: 'flex-start', overflowY: 'auto',
           fontFamily: '"Heebo", "Segoe UI", sans-serif',
         }}>
-          {agentDefs.map(a => (
+          {filteredAgents.map(a => (
             <div key={a.id} onClick={() => setSelectedId(prev => prev === a.id ? null : a.id)} style={{
               background: selectedId === a.id ? 'rgba(74,106,255,0.3)' : 'rgba(30,30,60,0.8)',
               border: '2px solid #3a3a5c', padding: 12, cursor: 'pointer',
@@ -3394,42 +4892,416 @@ export default function App() {
               </div>
             </div>
           ))}
+          {filteredAgents.length === 0 && (
+            <div style={{ color: '#666', fontSize: 14, padding: 20 }}>{t.noResults}</div>
+          )}
         </div>
       )}
 
-      {/* Bottom status bar — responsive */}
+      {/* Bottom status bar — responsive, with search + filter */}
       <div style={{
         position: 'absolute', bottom: 0, left: 0, right: 0,
         background: 'rgba(20,20,40,0.95)', borderTop: '2px solid #3a3a5c',
-        padding: isCompact ? '4px 4px' : isMobile ? '6px 8px' : '8px 16px',
         fontFamily: '"Heebo", "Segoe UI", sans-serif',
         boxShadow: 'inset 0 2px 0 #2a2a4a',
-        display: 'flex', gap: isCompact ? 2 : isMobile ? 6 : 12,
-        justifyContent: isMobile ? 'flex-start' : 'center',
-        flexWrap: isMobile ? 'nowrap' : 'wrap',
-        overflowX: isMobile ? 'auto' : 'visible',
-        WebkitOverflowScrolling: 'touch',
+        direction: 'rtl',
       }}>
-        {agentDefs.map(a => (
-          <div key={a.id} onClick={() => setSelectedId(s => s === a.id ? null : a.id)} style={{
-            display: 'flex', alignItems: 'center', gap: isCompact ? 2 : isMobile ? 3 : 5,
-            padding: isCompact ? '3px 3px' : isMobile ? '2px 5px' : '3px 8px',
-            borderRadius: 0, cursor: 'pointer', fontSize: isCompact ? 11 : isMobile ? 12 : 13,
-            background: selectedId === a.id ? 'rgba(100,100,200,0.3)' : 'transparent',
-            whiteSpace: 'nowrap', flexShrink: 0,
-            // Minimum touch target 44px height on mobile
-            minHeight: isMobile ? 36 : undefined,
-          }}>
-            <span style={{
-              width: isCompact ? 6 : 7, height: isCompact ? 6 : 7, borderRadius: '50%',
-              background: STATE_META[a.state].color, display: 'inline-block',
-            }} />
-            <span style={{ color: '#ccc' }}>
-              {isCompact ? a.emoji : `${a.emoji} ${a.name}`}
+        {/* Search + filter row */}
+        <div style={{
+          display: 'flex', alignItems: 'center',
+          gap: 6, padding: isCompact ? '3px 6px' : '4px 12px',
+          borderBottom: '1px solid rgba(255,255,255,0.05)',
+        }}>
+          <input
+            ref={searchInputRef}
+            type="text"
+            value={searchQuery}
+            onChange={e => setSearchQuery(e.target.value)}
+            placeholder={t.searchPlaceholder}
+            style={{
+              width: isCompact ? 100 : 140,
+              height: 26,
+              padding: '0 8px',
+              borderRadius: 4,
+              border: '1px solid rgba(255,255,255,0.1)',
+              background: 'rgba(255,255,255,0.05)',
+              color: '#ccc',
+              fontSize: 11,
+              outline: 'none',
+              fontFamily: '"Heebo", "Segoe UI", sans-serif',
+              direction: 'rtl',
+            }}
+            onFocus={e => { e.currentTarget.style.borderColor = '#4a6aff' }}
+            onBlur={e => { e.currentTarget.style.borderColor = 'rgba(255,255,255,0.1)' }}
+          />
+          {!isCompact && ([
+            ['all', t.filterAll],
+            ['active', t.filterActive],
+            ['working', t.filterWorking],
+            ['offline', t.filterOffline],
+          ] as const).map(([key, label]) => (
+            <button
+              key={key}
+              onClick={() => setStatusFilter(key as typeof statusFilter)}
+              style={{
+                padding: '2px 8px',
+                borderRadius: 4,
+                border: 'none',
+                background: statusFilter === key ? 'rgba(74,106,255,0.4)' : 'rgba(255,255,255,0.05)',
+                color: statusFilter === key ? '#fff' : '#888',
+                fontSize: 10,
+                cursor: 'pointer',
+                fontFamily: '"Heebo", "Segoe UI", sans-serif',
+              }}
+            >
+              {label}
+            </button>
+          ))}
+          {!isCompact && (
+            <button
+              onClick={() => setGroupByEnabled(g => !g)}
+              style={{
+                padding: '2px 8px', borderRadius: 4, border: 'none',
+                background: groupByEnabled ? 'rgba(74,106,255,0.4)' : 'rgba(255,255,255,0.05)',
+                color: groupByEnabled ? '#fff' : '#888',
+                fontSize: 10, cursor: 'pointer',
+                fontFamily: '"Heebo", "Segoe UI", sans-serif',
+              }}
+            >
+              📁 {t.groupBy}
+            </button>
+          )}
+          {!isCompact && (
+            <span style={{ fontSize: 10, color: '#555', marginRight: 'auto' }}>
+              / {t.shortcutSearch} &nbsp; ? {t.shortcuts}
             </span>
-          </div>
-        ))}
+          )}
+        </div>
+        {/* Agent list row — flat or grouped */}
+        <div style={{
+          display: 'flex', gap: isCompact ? 2 : isMobile ? 6 : 12,
+          justifyContent: isMobile ? 'flex-start' : 'center',
+          flexWrap: isMobile ? 'nowrap' : 'wrap',
+          overflowX: isMobile ? 'auto' : 'visible',
+          WebkitOverflowScrolling: 'touch',
+          padding: isCompact ? '3px 4px' : isMobile ? '4px 8px' : '6px 16px',
+          alignItems: 'center',
+        }}>
+          {groupByEnabled && groupNames.length > 0 ? (
+            // Grouped view
+            <>
+              {[...groupNames, '__ungrouped__'].map(groupKey => {
+                const isUngrouped = groupKey === '__ungrouped__'
+                const label = isUngrouped ? t.ungrouped : groupKey
+                const groupAgents = filteredAgents.filter(a =>
+                  isUngrouped ? !agentGroups[a.id] || !groupNames.includes(agentGroups[a.id]) : agentGroups[a.id] === groupKey
+                )
+                if (groupAgents.length === 0 && isUngrouped) return null
+                return (
+                  <div
+                    key={groupKey}
+                    onDragOver={e => { e.preventDefault(); e.currentTarget.style.background = 'rgba(74,106,255,0.15)' }}
+                    onDragLeave={e => { e.currentTarget.style.background = 'transparent' }}
+                    onDrop={e => {
+                      e.preventDefault()
+                      e.currentTarget.style.background = 'transparent'
+                      if (dragGroupAgent) {
+                        setAgentGroups(prev => ({
+                          ...prev,
+                          [dragGroupAgent]: isUngrouped ? '' : groupKey,
+                        }))
+                        setDragGroupAgent(null)
+                      }
+                    }}
+                    style={{
+                      display: 'flex', alignItems: 'center', gap: 4,
+                      padding: '2px 6px',
+                      borderRadius: 4,
+                      border: '1px solid rgba(255,255,255,0.08)',
+                      background: 'transparent',
+                      transition: 'background 0.2s',
+                    }}
+                  >
+                    <span style={{ fontSize: 9, color: '#7B68EE', fontWeight: 600, marginLeft: 4 }}>
+                      {label}
+                    </span>
+                    <span style={{ color: 'rgba(255,255,255,0.15)' }}>│</span>
+                    {groupAgents.map((a, i) => (
+                      <div
+                        key={a.id}
+                        draggable
+                        onDragStart={() => setDragGroupAgent(a.id)}
+                        onDragEnd={() => setDragGroupAgent(null)}
+                        onClick={() => setSelectedId(s => s === a.id ? null : a.id)}
+                        style={{
+                          display: 'flex', alignItems: 'center', gap: 3,
+                          padding: '2px 6px', cursor: 'grab', fontSize: 12,
+                          background: selectedId === a.id ? 'rgba(100,100,200,0.3)'
+                            : dragGroupAgent === a.id ? 'rgba(74,106,255,0.2)' : 'transparent',
+                          borderRadius: 3, whiteSpace: 'nowrap',
+                          opacity: dragGroupAgent === a.id ? 0.5 : 1,
+                        }}
+                      >
+                        <span style={{
+                          width: 6, height: 6, borderRadius: '50%',
+                          background: STATE_META[a.state].color, display: 'inline-block',
+                        }} />
+                        <span style={{ color: '#ccc' }}>{a.emoji} {a.name}</span>
+                      </div>
+                    ))}
+                  </div>
+                )
+              })}
+              {/* Edit groups button */}
+              {!isCompact && (
+                <button
+                  onClick={() => setEditingGroups(e => !e)}
+                  style={{
+                    padding: '2px 6px', borderRadius: 4, border: 'none',
+                    background: 'rgba(255,255,255,0.05)', color: '#888',
+                    fontSize: 10, cursor: 'pointer',
+                  }}
+                >
+                  ✏️
+                </button>
+              )}
+            </>
+          ) : (
+            // Flat view (original)
+            filteredAgents.map((a, i) => (
+              <div
+                key={a.id}
+                draggable={groupByEnabled}
+                onDragStart={() => groupByEnabled && setDragGroupAgent(a.id)}
+                onDragEnd={() => setDragGroupAgent(null)}
+                onClick={() => setSelectedId(s => s === a.id ? null : a.id)}
+                style={{
+                  display: 'flex', alignItems: 'center', gap: isCompact ? 2 : isMobile ? 3 : 5,
+                  padding: isCompact ? '3px 3px' : isMobile ? '2px 5px' : '3px 8px',
+                  borderRadius: 0, cursor: 'pointer', fontSize: isCompact ? 11 : isMobile ? 12 : 13,
+                  background: selectedId === a.id ? 'rgba(100,100,200,0.3)' : 'transparent',
+                  whiteSpace: 'nowrap', flexShrink: 0,
+                  minHeight: isMobile ? 36 : undefined,
+                }}
+              >
+                {!isCompact && <span style={{ fontSize: 9, color: '#555', marginLeft: 2 }}>{i + 1}</span>}
+                <span style={{
+                  width: isCompact ? 6 : 7, height: isCompact ? 6 : 7, borderRadius: '50%',
+                  background: STATE_META[a.state].color, display: 'inline-block',
+                }} />
+                <span style={{ color: '#ccc' }}>
+                  {isCompact ? a.emoji : `${a.emoji} ${a.name}`}
+                </span>
+              </div>
+            ))
+          )}
+          {filteredAgents.length === 0 && (
+            <span style={{ color: '#666', fontSize: 12, padding: 4 }}>{t.noResults}</span>
+          )}
+        </div>
       </div>
+
+      {/* Keyboard shortcuts modal */}
+      {showShortcuts && (
+        <div
+          onClick={() => setShowShortcuts(false)}
+          style={{
+            position: 'absolute', inset: 0, background: 'rgba(0,0,0,0.6)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            zIndex: 100, fontFamily: '"Heebo", sans-serif',
+          }}
+        >
+          <div
+            onClick={e => e.stopPropagation()}
+            style={{
+              background: '#1a1d35', border: '2px solid #3a3a5c',
+              borderRadius: 12, padding: 24, width: 320,
+              color: '#e0e0e0', direction: 'rtl',
+            }}
+          >
+            <h3 style={{ margin: '0 0 16px', fontSize: 16, textAlign: 'center' }}>
+              ⌨️ {t.shortcuts}
+            </h3>
+            {[
+              ['/', t.shortcutSearch],
+              ['D', t.shortcutDashboard],
+              ['E', t.shortcutEdit],
+              ['S', t.shortcutSound],
+              ['G', t.groupBy],
+              ['J / →', t.shortcutNext],
+              ['K / ←', t.shortcutPrev],
+              ['1-9', t.agents],
+              ['Esc', t.shortcutClose],
+              ['?', t.shortcuts],
+            ].map(([key, desc]) => (
+              <div key={key} style={{
+                display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                padding: '6px 0', borderBottom: '1px solid rgba(255,255,255,0.06)',
+              }}>
+                <span style={{ color: '#aaa', fontSize: 13 }}>{desc}</span>
+                <kbd style={{
+                  background: 'rgba(255,255,255,0.1)', padding: '2px 8px',
+                  borderRadius: 4, fontSize: 12, color: '#7B68EE',
+                  border: '1px solid rgba(255,255,255,0.15)',
+                  fontFamily: 'monospace',
+                }}>{key}</kbd>
+              </div>
+            ))}
+            <div style={{ textAlign: 'center', marginTop: 16 }}>
+              <button
+                onClick={() => setShowShortcuts(false)}
+                style={{
+                  background: 'rgba(74,106,255,0.3)', border: '1px solid rgba(74,106,255,0.5)',
+                  borderRadius: 8, padding: '6px 20px', color: '#fff',
+                  fontSize: 13, cursor: 'pointer', fontFamily: '"Heebo", sans-serif',
+                }}
+              >
+                {t.shortcutClose} (Esc)
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Group editing modal */}
+      {editingGroups && (
+        <div
+          onClick={() => setEditingGroups(false)}
+          style={{
+            position: 'absolute', inset: 0, background: 'rgba(0,0,0,0.6)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            zIndex: 100, fontFamily: '"Heebo", sans-serif',
+          }}
+        >
+          <div
+            onClick={e => e.stopPropagation()}
+            style={{
+              background: '#1a1d35', border: '2px solid #3a3a5c',
+              borderRadius: 12, padding: 24, width: 360,
+              color: '#e0e0e0', direction: 'rtl',
+            }}
+          >
+            <h3 style={{ margin: '0 0 16px', fontSize: 16, textAlign: 'center' }}>
+              📁 {t.editGroups}
+            </h3>
+
+            {/* Existing groups */}
+            {groupNames.map(name => (
+              <div key={name} style={{
+                display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                padding: '8px 0', borderBottom: '1px solid rgba(255,255,255,0.06)',
+              }}>
+                <span style={{ fontSize: 14 }}>{name}</span>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <span style={{ fontSize: 11, color: '#888' }}>
+                    {agentDefs.filter(a => agentGroups[a.id] === name).length} {t.agents}
+                  </span>
+                  <button
+                    onClick={() => {
+                      setGroupNames(prev => prev.filter(g => g !== name))
+                      setAgentGroups(prev => {
+                        const next = { ...prev }
+                        for (const k of Object.keys(next)) {
+                          if (next[k] === name) next[k] = ''
+                        }
+                        return next
+                      })
+                    }}
+                    style={{
+                      background: 'rgba(255,80,80,0.2)', border: '1px solid rgba(255,80,80,0.3)',
+                      borderRadius: 4, padding: '2px 8px', color: '#f88',
+                      fontSize: 11, cursor: 'pointer',
+                    }}
+                  >
+                    {t.deleteGroup}
+                  </button>
+                </div>
+              </div>
+            ))}
+
+            {/* Add new group */}
+            <div style={{ display: 'flex', gap: 8, marginTop: 16 }}>
+              <input
+                type="text"
+                value={newGroupName}
+                onChange={e => setNewGroupName(e.target.value)}
+                onKeyDown={e => {
+                  if (e.key === 'Enter' && newGroupName.trim()) {
+                    const name = newGroupName.trim()
+                    if (!groupNames.includes(name)) {
+                      setGroupNames(prev => [...prev, name])
+                    }
+                    setNewGroupName('')
+                  }
+                }}
+                placeholder={t.groupName}
+                style={{
+                  flex: 1, height: 32, padding: '0 10px',
+                  borderRadius: 6, border: '1px solid rgba(255,255,255,0.15)',
+                  background: 'rgba(255,255,255,0.05)', color: '#eee',
+                  fontSize: 13, outline: 'none', direction: 'rtl',
+                }}
+              />
+              <button
+                onClick={() => {
+                  const name = newGroupName.trim()
+                  if (name && !groupNames.includes(name)) {
+                    setGroupNames(prev => [...prev, name])
+                    setNewGroupName('')
+                  }
+                }}
+                style={{
+                  background: 'rgba(74,106,255,0.3)', border: '1px solid rgba(74,106,255,0.5)',
+                  borderRadius: 6, padding: '0 14px', color: '#fff',
+                  fontSize: 12, cursor: 'pointer',
+                }}
+              >
+                {t.addGroup}
+              </button>
+            </div>
+
+            {/* Agent assignment */}
+            {groupNames.length > 0 && (
+              <div style={{ marginTop: 16, borderTop: '1px solid rgba(255,255,255,0.08)', paddingTop: 12 }}>
+                <div style={{ fontSize: 12, color: '#888', marginBottom: 8 }}>{t.dragToGroup}</div>
+                {agentDefs.map(a => (
+                  <div key={a.id} style={{
+                    display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                    padding: '4px 0', fontSize: 13,
+                  }}>
+                    <span>{a.emoji} {a.name}</span>
+                    <select
+                      value={agentGroups[a.id] || ''}
+                      onChange={e => setAgentGroups(prev => ({ ...prev, [a.id]: e.target.value }))}
+                      style={{
+                        background: 'rgba(255,255,255,0.08)', border: '1px solid rgba(255,255,255,0.15)',
+                        borderRadius: 4, padding: '2px 6px', color: '#ccc',
+                        fontSize: 11, direction: 'rtl',
+                      }}
+                    >
+                      <option value="">{t.ungrouped}</option>
+                      {groupNames.map(g => <option key={g} value={g}>{g}</option>)}
+                    </select>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            <div style={{ textAlign: 'center', marginTop: 16 }}>
+              <button
+                onClick={() => setEditingGroups(false)}
+                style={{
+                  background: 'rgba(74,106,255,0.3)', border: '1px solid rgba(74,106,255,0.5)',
+                  borderRadius: 8, padding: '6px 20px', color: '#fff',
+                  fontSize: 13, cursor: 'pointer', fontFamily: '"Heebo", sans-serif',
+                }}
+              >
+                {t.doneEditing}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Detail panel — chat-focused, compact header */}
       {selectedAgent && (
@@ -3479,15 +5351,20 @@ export default function App() {
             }}>✕</button>
           </div>
 
-          {/* Chat takes all remaining space */}
-          <ChatInput
+          {/* Chat takes all remaining space (hidden in viewer mode) */}
+          {!isViewer && <ChatInput
             agentId={selectedAgent.id}
             agentColor={STATE_META[selectedAgent.state].color}
             compact={isCompact}
             onSend={handleSendToAgent}
             onFetchHistory={handleFetchHistory}
             t={t}
-          />
+          />}
+          {isViewer && (
+            <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#555', fontSize: 13, padding: 20 }}>
+              👁️ {t.viewerMode}
+            </div>
+          )}
         </div>
       )}
     </div>
