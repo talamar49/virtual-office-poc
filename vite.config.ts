@@ -3,6 +3,19 @@ import react from '@vitejs/plugin-react'
 
 export default defineConfig({
   plugins: [react()],
+  build: {
+    modulePreload: {
+      resolveDependencies: (_filename, deps) => deps.filter(dep => !dep.includes('export-pdf') && !dep.includes('html2canvas')),
+    },
+    rollupOptions: {
+      output: {
+        manualChunks(id) {
+          if (id.includes('node_modules/react')) return 'react-vendor'
+          if (id.includes('node_modules/jspdf')) return 'export-pdf'
+        },
+      },
+    },
+  },
   server: {
     port: 18000,
     host: '0.0.0.0',

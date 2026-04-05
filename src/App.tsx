@@ -1,5 +1,4 @@
 import { useRef, useEffect, useState, useCallback } from 'react'
-import { jsPDF } from 'jspdf'
 
 // ── i18n ──
 type Lang = 'he' | 'en'
@@ -2088,7 +2087,7 @@ function drawAgent(
 
   const isOffline = agent.def.state === 'offline'
   const isInLounge = agent.room === 'lounge'
-  if (isOffline) ctx.globalAlpha = 0.4
+  // Offline agents are fully visible (no transparency)
   // Sitting offset — agents in lounge are "sitting" on sofas (drawn lower)
   const sitOffset = isInLounge ? 4 : 0
 
@@ -2104,9 +2103,9 @@ function drawAgent(
   // Shadow — use v7 shadow sprite if available, else fallback ellipse
   const shadowImg = shadowSprites[agent.def.id]
   if (shadowImg?.complete && shadowImg.naturalWidth > 0) {
-    ctx.globalAlpha = (isOffline ? 0.4 : 1) * 0.35
+    ctx.globalAlpha = 0.35
     ctx.drawImage(shadowImg, Math.round(sx - 20), Math.round(sy - 2), 40, 12)
-    ctx.globalAlpha = isOffline ? 0.4 : 1
+    ctx.globalAlpha = 1
   } else {
     ctx.beginPath()
     ctx.ellipse(sx, sy + 4, 14, 6, 0, 0, Math.PI * 2)
@@ -2207,9 +2206,14 @@ function drawAgent(
   // ── Name label + Status dot (next to name) ──
   const nameY = Math.round(sy + 18 + breathOffset + sitOffset)
   const nameX = Math.round(sx)
-  ctx.font = 'bold 11px "Heebo", "Segoe UI", sans-serif'
+  ctx.font = 'bold 12px "Heebo", "Segoe UI", sans-serif'
   ctx.textAlign = 'center'
-  ctx.fillStyle = isOffline ? '#666' : '#eee'
+  // Dark outline for readability on any background
+  ctx.strokeStyle = 'rgba(0,0,0,0.7)'
+  ctx.lineWidth = 3
+  ctx.lineJoin = 'round'
+  ctx.strokeText(agent.def.name, nameX, nameY)
+  ctx.fillStyle = '#ffffff'
   ctx.fillText(agent.def.name, nameX, nameY)
 
   // Status dot — positioned to the left of the name (RTL feel)
@@ -2232,11 +2236,11 @@ function drawAgent(
       // Pulsing effect for idle/error
       const pulse = (agent.def.state === 'idle' || agent.def.state === 'error')
         ? 0.7 + 0.3 * Math.sin(t * 4) : 1
-      ctx.globalAlpha = (isOffline ? 0.4 : 1) * pulse
+      ctx.globalAlpha = 1 * pulse
       ctx.imageSmoothingEnabled = false
       ctx.drawImage(iconSprite, iconX, iconY, iconSize, iconSize)
       ctx.imageSmoothingEnabled = true
-      ctx.globalAlpha = isOffline ? 0.4 : 1
+      ctx.globalAlpha = 1
     }
   }
 
@@ -2308,7 +2312,7 @@ function drawAgent(
       ctx.fill()
 
       // Task text
-      ctx.fillStyle = isOffline ? '#888' : '#dde4ff'
+      ctx.fillStyle = '#dde4ff'
       ctx.fillText(taskText, Math.round(sx), taskY - padY)
     }
   }
@@ -2327,7 +2331,7 @@ function drawAgent(
 
     if (bubbleAlpha > 0.01) {
       ctx.save()
-      ctx.globalAlpha = (isOffline ? 0.4 : 1) * bubbleAlpha
+      ctx.globalAlpha = 1 * bubbleAlpha
 
       // Float up slightly over time
       const floatY = -progress * 8
@@ -2680,7 +2684,7 @@ function drawScene(
       ctx.textAlign = 'center'
       const label = def.name
       const tw = ctx.measureText(label).width + 18
-      ctx.fillStyle = isWorking ? `${stateColor}25` : 'rgba(0,0,0,0.25)'
+      ctx.fillStyle = isWorking ? `${stateColor}40` : 'rgba(0,0,0,0.55)'
       ctx.beginPath()
       ctx.roundRect(wsx - tw / 2, wsy + 22, tw, 16, 4)
       ctx.fill()
@@ -2689,7 +2693,7 @@ function drawScene(
       ctx.arc(wsx + tw / 2 - 8, wsy + 30, 3, 0, Math.PI * 2)
       ctx.fillStyle = stateColor
       ctx.fill()
-      ctx.fillStyle = isWorking ? 'rgba(255,255,255,0.75)' : 'rgba(255,255,255,0.3)'
+      ctx.fillStyle = '#ffffff'
       ctx.fillText(label, wsx - 2, wsy + 34)
     }})
   }
@@ -3307,15 +3311,16 @@ export default function App() {
   const isViewer = useState(() => new URLSearchParams(window.location.search).get('mode') === 'viewer')[0]
   const [linkCopied, setLinkCopied] = useState(false)
 
-  // Settings state — skip in viewer mode
-  const [showSettings, setShowSettings] = useState(() => isViewer ? false : !sessionStorage.getItem('gateway-token'))
+  // Settings state — always start hidden; auto-detect will show if needed
+  const [showSettings, setShowSettings] = useState(false)
   const [gatewayToken, setGatewayToken] = useState(() => sessionStorage.getItem('gateway-token') || '')
   const [gatewayUrl, setGatewayUrl] = useState(() => sessionStorage.getItem('gateway-url') || 'http://127.0.0.1:18789')
+  const [autoDetectDone, setAutoDetectDone] = useState(() => isViewer || !!sessionStorage.getItem('gateway-token'))
 
   // Auto-detect gateway token from backend (reads openclaw.json)
   useEffect(() => {
-    if (isViewer) return
-    if (sessionStorage.getItem('gateway-token')) return // already have a token
+    if (isViewer) { setAutoDetectDone(true); return }
+    if (sessionStorage.getItem('gateway-token')) { setAutoDetectDone(true); return }
     const backendBase = window.location.port === '5173' ? 'http://localhost:3001' : window.location.origin
     fetch(`${backendBase}/api/config`)
       .then(r => r.json())
@@ -3327,10 +3332,17 @@ export default function App() {
             sessionStorage.setItem('gateway-url', data.url)
             setGatewayUrl(data.url)
           }
-          setShowSettings(false) // skip login screen!
+          // Token found — no settings screen needed
+        } else {
+          // No token from server — show settings
+          setShowSettings(true)
         }
       })
-      .catch(() => { /* server not reachable — show manual settings */ })
+      .catch(() => {
+        // Server not reachable — show manual settings
+        setShowSettings(true)
+      })
+      .finally(() => setAutoDetectDone(true))
   }, [isViewer])
 
   // Dashboard mode toggle
@@ -3379,9 +3391,24 @@ export default function App() {
   }, [])
 
   useEffect(() => {
-    loadSpritesForAgents(agentDefs)
-    loadDecorations()
-  }, [agentDefs])
+    const warmup = () => {
+      loadDecorations()
+      if (agentDefs.length > 0) loadSpritesForAgents(agentDefs)
+    }
+
+    // Defer non-critical asset warmup until the browser is idle.
+    const idleWindow = window as Window & {
+      requestIdleCallback?: (cb: () => void) => number
+      cancelIdleCallback?: (id: number) => void
+    }
+    if (idleWindow.requestIdleCallback) {
+      const id = idleWindow.requestIdleCallback(warmup)
+      return () => idleWindow.cancelIdleCallback?.(id)
+    }
+
+    const timeout = window.setTimeout(warmup, 150)
+    return () => window.clearTimeout(timeout)
+  }, [])
 
   // ── Sound system cleanup ──
   useEffect(() => {
@@ -4460,9 +4487,15 @@ export default function App() {
   }, [])
 
   // Export office as PDF
-  const handleExportPdf = useCallback(() => {
+  const handleExportPdf = useCallback(async () => {
     const canvas = canvasRef.current
     if (!canvas) return
+
+    const [{ jsPDF }] = await Promise.all([
+      import('jspdf'),
+      new Promise(resolve => requestAnimationFrame(() => resolve(null))),
+    ])
+
     const dataUrl = canvas.toDataURL('image/png')
     const w = canvas.width
     const h = canvas.height
@@ -4485,7 +4518,14 @@ export default function App() {
 
   const selectedAgent = agentDefs.find(a => a.id === selectedId) ?? null
 
-    // Show settings screen
+    // Wait for auto-detect to finish before showing anything
+  if (!autoDetectDone) {
+    return <div style={{ width: '100vw', height: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#1a1a2e' }}>
+      <div style={{ color: '#fff', fontSize: '1.2rem', fontFamily: 'Heebo, sans-serif' }}>🏢 מתחבר...</div>
+    </div>
+  }
+
+  // Show settings screen only if auto-detect failed or user opened manually
   if (showSettings) {
     return <SettingsScreen onConnect={handleConnect} t={t} dir={dir} toggleLang={toggleLang} lang={lang} error={connectionError} />
   }
