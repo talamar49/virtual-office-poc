@@ -1400,6 +1400,55 @@ function agentDefFromSession(sessionKey: string, index: number, updatedAt: numbe
   }
 }
 
+function normalizeBackendState(state: string | undefined): AgentState {
+  if (state === 'working') return 'working'
+  if (state === 'talking' || state === 'active') return 'active'
+  if (state === 'idle') return 'idle'
+  if (state === 'error') return 'error'
+  return 'offline'
+}
+
+function getBackendTask(agent: any): string {
+  if (typeof agent.task === 'string' && agent.task.trim()) return agent.task
+  if (typeof agent.currentTask === 'string' && agent.currentTask.trim()) return agent.currentTask
+  if (typeof agent.lastMessage === 'string' && agent.lastMessage.trim()) return agent.lastMessage
+  if (agent.lastMessage?.preview) return String(agent.lastMessage.preview).trim()
+  return ''
+}
+
+function agentDefFromBackendAgent(agent: any, index: number, existing?: AgentDef): AgentDef {
+  const id = agent.id ?? agent.agentId ?? `agent-${index}`
+
+  if (!KNOWN_AGENTS[id]) {
+    KNOWN_AGENTS[id] = {
+      name: agent.name ?? id,
+      role: agent.role ?? 'Agent',
+      emoji: agent.emoji ?? AGENT_EMOJIS[Object.keys(KNOWN_AGENTS).length % AGENT_EMOJIS.length],
+      color: agent.color ?? FALLBACK_COLORS[Object.keys(KNOWN_AGENTS).length % FALLBACK_COLORS.length],
+      frames: agent.frames ?? 6,
+      fixedIndex: Object.keys(KNOWN_AGENTS).length,
+    }
+    if (!ALL_AGENT_IDS.includes(id)) ALL_AGENT_IDS.push(id)
+  }
+
+  const known = KNOWN_AGENTS[id]
+  return {
+    id,
+    name: agent.name ?? known?.name ?? id,
+    role: agent.role ?? known?.role ?? 'Agent',
+    emoji: agent.emoji ?? known?.emoji ?? '🤖',
+    color: agent.color ?? known?.color ?? FALLBACK_COLORS[index % FALLBACK_COLORS.length],
+    frames: agent.frames ?? known?.frames ?? 6,
+    state: normalizeBackendState(agent.state),
+    task: getBackendTask(agent) || existing?.task || '',
+    cubicleIndex: existing?.cubicleIndex ?? index,
+    lastUpdated: agent.lastActivity ? new Date(agent.lastActivity).getTime() : (existing?.lastUpdated ?? Date.now()),
+    sessionKey: agent.sessionKey ?? existing?.sessionKey,
+    model: agent.model ?? existing?.model,
+    tokenUsage: agent.tokenUsage ?? existing?.tokenUsage,
+  }
+}
+
 // ── Default demo agents (used when no Gateway token) ──
 const _now = Date.now()
 // No hardcoded agents — demo mode shows empty office until Gateway connects
@@ -3479,6 +3528,7 @@ export default function App() {
   }, [])
 
   const discoveredRef = useRef(false)
+  const agentsVersionRef = useRef(0)
 
   // ── Viewer mode polling — public /api/agents endpoint ──
   useEffect(() => {
@@ -3538,191 +3588,91 @@ export default function App() {
     return () => { cancelled = true; clearInterval(timer) }
   }, [isViewer])
 
-  // ── Live status polling from Gateway — discovers agents dynamically ──
+  // ── Fast startup via backend state snapshot + delta sync ──
   useEffect(() => {
-    if (!gatewayToken || isViewer) return // demo mode or viewer mode
+    if (!gatewayToken || isViewer) return
+    let cancelled = false
 
-    async function pollGateway() {
-      try {
-        // Use backend proxy to avoid CORS issues
-        const backendBase = window.location.port === '5173'
-          ? 'http://localhost:3001'  // dev mode: Vite on 5173, backend on 3001
-          : window.location.origin   // prod: same origin
+    const backendBase = window.location.port === '5173'
+      ? 'http://localhost:3001'
+      : window.location.origin
 
-        const res = await fetch(`${backendBase}/api/proxy/sessions`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'X-Gateway-Token': gatewayToken,
-            'X-Gateway-URL': gatewayUrl,
-          },
-          body: JSON.stringify({ activeMinutes: 10080, messageLimit: 1 }), // 7 days — load ALL agents, minimal messages for speed
-        })
-        if (!res.ok) {
-          pollFailCountRef.current++
-          if (res.status === 401 || res.status === 403) {
-            setConnectionError(lang === 'he' ? 'Gateway Token שגוי — בדוק את ההגדרות' : 'Invalid Gateway Token — check settings')
-            setShowSettings(true)
-            return
-          }
-          if (pollFailCountRef.current >= 3) {
-            setConnectionError(lang === 'he' ? 'לא ניתן להתחבר ל-Gateway' : 'Cannot connect to Gateway')
-            setShowSettings(true)
-          }
-          return
+    const applyFullSnapshot = (agents: any[], version = 0) => {
+      const currentDefs = agentDefsRef.current
+      const nextDefs = agents.map((agent, i) => {
+        const existing = currentDefs.find(d => d.id === (agent.id ?? agent.agentId ?? `agent-${i}`))
+        return agentDefFromBackendAgent(agent, i, existing)
+      })
+
+      if (nextDefs.length > MAX_AGENTS) {
+        setNotifications(prev => [...prev.slice(-(MAX_VISIBLE_NOTIFICATIONS - 1)), {
+          id: `cap-${Date.now()}`,
+          agentName: '⚠️ Office',
+          agentEmoji: '🏢',
+          message: `${nextDefs.length} agents detected — max capacity is ${MAX_AGENTS}. Some agents may not have seats.`,
+          timestamp: Date.now(),
+        }])
+      }
+
+      setConnectionError(null)
+      pollFailCountRef.current = 0
+      agentsVersionRef.current = version
+      setAgentDefs(nextDefs)
+      loadSpritesForAgents(nextDefs)
+
+      if (!discoveredRef.current) {
+        discoveredRef.current = true
+        setAgentsLoaded(true)
+        agentsRef.current = buildAgents(nextDefs)
+        return
+      }
+
+      const oldAgents = agentsRef.current
+      const newAgents = buildAgents(nextDefs)
+      for (const na of newAgents) {
+        const old = oldAgents.find(oa => oa.def.id === na.def.id)
+        if (old) {
+          na.x = old.x
+          na.y = old.y
         }
-        pollFailCountRef.current = 0
-        setConnectionError(null)
-        const data = await res.json()
-        const sessions: any[] = data.sessions ?? []
-        if (sessions.length === 0) {
-          pollFailCountRef.current++
-          if (pollFailCountRef.current >= 6) { // 30s with no agents
-            setConnectionError(lang === 'he' ? 'לא נמצאו סוכנים — בדוק שה-Gateway פעיל ויש סוכנים מוגדרים' : 'No agents found — check Gateway is running and agents are configured')
-          }
-          return
-        }
+      }
+      agentsRef.current = newAgents
+    }
 
-        // Group sessions by agent, preferring listenable sessions (main/webchat)
-        const agentSessions = new Map<string, any>()
-        // Prefer discord sessions — messages sent via chat UI must arrive in the agent's Discord channel
-        const SESSION_KIND_PRIORITY: Record<string, number> = { discord: 3, telegram: 2, webchat: 1, main: 0 }
-        for (const session of sessions) {
-          const keyParts = (session.key || '').split(':')
-          const rawId = keyParts[1] || 'unknown'
-          const agentId = rawId
-          const kind = session.kind || keyParts[2] || ''
-          const existing = agentSessions.get(agentId)
-          if (!existing) {
-            agentSessions.set(agentId, session)
-          } else {
-            const existingKind = existing.kind || (existing.key || '').split(':')[2] || ''
-            const newPriority = SESSION_KIND_PRIORITY[kind] ?? 0
-            const existingPriority = SESSION_KIND_PRIORITY[existingKind] ?? 0
-            // Prefer higher-priority session kind; if same priority, take most recent
-            if (newPriority > existingPriority ||
-                (newPriority === existingPriority && (session.updatedAt ?? 0) > (existing.updatedAt ?? 0))) {
-              agentSessions.set(agentId, session)
-            }
-          }
-        }
+    const applyDelta = (updates: any[]) => {
+      if (updates.length === 0) return
+      const agentRuntimes = agentsRef.current
+      let defsChanged = false
 
-        const sessionEntries: [string, any][] = Array.from(agentSessions.entries())
+      for (const update of updates) {
+        const agentId = update.agentId
+        const runtime = agentRuntimes.find(a => a.def.id === agentId)
+        if (!runtime) return false
+        const changes = update.changes ?? {}
 
-        // First poll: discover agents and rebuild — include ALL known agents
-        if (!discoveredRef.current && sessionEntries.length > 0) {
-          discoveredRef.current = true
-          setAgentsLoaded(true)
-          const discoveredIds = new Set(sessionEntries.map(([id]) => id))
-          const newDefs: AgentDef[] = sessionEntries.map(([id, s], i) => {
-            const updatedAt = new Date(s.updatedAt).getTime()
-            const { text: taskText } = extractTaskFromSession(s)
-            const known = KNOWN_AGENTS[id]
-            const def = agentDefFromSession(s.key, known?.fixedIndex ?? i, updatedAt, !!s.abortedLastRun, taskText)
-            def.model = s.model ?? undefined
-            def.tokenUsage = s.totalTokens ?? undefined
-            return def
-          })
-          // All agents come from Gateway — no hardcoded additions needed
-          if (newDefs.length > MAX_AGENTS) {
-            setNotifications(prev => [...prev.slice(-(MAX_VISIBLE_NOTIFICATIONS - 1)), {
-              id: `cap-${Date.now()}`, agentName: '⚠️ Office', agentEmoji: '🏢',
-              message: `${newDefs.length} agents detected — max capacity is ${MAX_AGENTS}. Some agents may not have seats.`,
-              timestamp: Date.now(),
-            }])
-          }
-          setAgentDefs(newDefs)
-          loadSpritesForAgents(newDefs)
-          agentsRef.current = buildAgents(newDefs)
-          return
-        }
-
-        // Subsequent polls: update existing agents' states + discover new ones
-        const currentDefs = agentDefsRef.current
-        const currentIds = new Set(currentDefs.map(d => d.id))
-        let needsRebuild = false
-
-        for (const [id, session] of sessionEntries) {
-          if (!currentIds.has(id)) {
-            // New agent discovered — add it
-            needsRebuild = true
-            continue
-          }
-        }
-
-        if (needsRebuild) {
-          const newDefs: AgentDef[] = sessionEntries.map(([id, s], i) => {
-            const existing = currentDefs.find(d => d.id === id)
-            const updatedAt = new Date(s.updatedAt).getTime()
-            const { text: taskText, isFallback: taskIsFallback } = extractTaskFromSession(s)
-            const def = agentDefFromSession(s.key, existing?.cubicleIndex ?? i, updatedAt, !!s.abortedLastRun, taskText)
-            if (existing) { def.task = (!taskIsFallback && taskText) ? taskText : (existing.task || taskText) }
-            return def
-          })
-          setAgentDefs(newDefs)
-          loadSpritesForAgents(newDefs)
-          // Preserve existing agent positions during rebuild to prevent flicker
-          const oldAgents = agentsRef.current
-          const newAgents = buildAgents(newDefs)
-          for (const na of newAgents) {
-            const old = oldAgents.find(oa => oa.def.id === na.def.id)
-            if (old) { na.x = old.x; na.y = old.y }
-          }
-          agentsRef.current = newAgents
-          return
-        }
-
-        // Normal update: just update states
-        const agentRuntimes = agentsRef.current
-        const byIdMap = new Map(sessionEntries)
-        let defsChanged = false
-        for (const a of agentRuntimes) {
-          const session = byIdMap.get(a.def.id)
-          if (!session) continue
-
-          const updatedAt = new Date(session.updatedAt).getTime()
-          const elapsed = Date.now() - updatedAt
-          const prevUpdated = prevUpdatedAtRef.current.get(a.def.id) ?? 0
-          const justChanged = prevUpdated > 0 && updatedAt !== prevUpdated
-          prevUpdatedAtRef.current.set(a.def.id, updatedAt)
-
-          let newState: AgentState
-          if (session.abortedLastRun) {
-            newState = 'error'
-          } else if (justChanged || elapsed < 15_000) {
-            // updatedAt changed since last poll → actively working
-            newState = 'working'
-          } else if (elapsed < 120_000) {
-            newState = 'active'
-          } else if (elapsed < 300_000) {
-            newState = 'idle'
-          } else {
-            newState = 'offline'
-          }
-
-          if (newState !== a.def.state) {
-            const oldState = a.def.state
-            a.def.state = newState
-            const { pos: newPos, room: newRoom } = getTargetTileForAgent(a.def.id, newState)
-            a.room = newRoom
+        if (changes.state) {
+          const newState = normalizeBackendState(changes.state)
+          if (newState !== runtime.def.state) {
+            const oldState = runtime.def.state
+            runtime.def.state = newState
+            const { pos: newPos, room: newRoom } = getTargetTileForAgent(runtime.def.id, newState)
+            runtime.room = newRoom
             const [ntx, nty] = newPos
-            // Generate L-shaped walk path for smooth movement between rooms
-            if (Math.abs(a.x - ntx) > 0.5 || Math.abs(a.y - nty) > 0.5) {
-              a.path = {
-                waypoints: findPath([Math.round(a.x), Math.round(a.y)], [ntx, nty]),
+            if (Math.abs(runtime.x - ntx) > 0.5 || Math.abs(runtime.y - nty) > 0.5) {
+              runtime.path = {
+                waypoints: findPath([Math.round(runtime.x), Math.round(runtime.y)], [ntx, nty]),
                 currentWaypoint: 0,
               }
             }
-            a.tx = ntx
-            a.ty = nty
+            runtime.tx = ntx
+            runtime.ty = nty
             defsChanged = true
 
-            // Notification: agent finished working (working/active → idle/offline)
             if ((oldState === 'working' || oldState === 'active') && (newState === 'idle' || newState === 'offline')) {
               const notif: OfficeNotification = {
-                id: `${a.def.id}-${Date.now()}`,
-                agentName: a.def.name,
-                agentEmoji: a.def.emoji,
+                id: `${runtime.def.id}-${Date.now()}`,
+                agentName: runtime.def.name,
+                agentEmoji: runtime.def.emoji,
                 message: i18nRef.current.taskCompleted,
                 timestamp: Date.now(),
               }
@@ -3730,58 +3680,109 @@ export default function App() {
               globalSound.playNotification()
             }
 
-            // Sound: agent started working
             if (newState === 'working' || newState === 'active') {
               globalSound.playTyping()
             }
           }
+        }
 
-          const { text: newTask, isFallback: newTaskIsFallback } = extractTaskFromSession(session, newState)
-          if (newTask && newTask !== a.def.task) {
-            // Don't overwrite a real task with a fallback label
-            const currentIsFallback = !a.def.task || Object.values(TASK_FALLBACKS).includes(a.def.task)
-            if (!newTaskIsFallback || currentIsFallback) {
-              a.def.task = newTask
-              defsChanged = true
-            }
-          }
-          if (updatedAt !== a.def.lastUpdated) {
-            a.def.lastUpdated = updatedAt
-            defsChanged = true
-          }
-          const newModel = session.model ?? undefined
-          if (newModel !== a.def.model) {
-            a.def.model = newModel
-            defsChanged = true
-          }
-          const newTokens = session.totalTokens ?? undefined
-          if (newTokens !== a.def.tokenUsage) {
-            a.def.tokenUsage = newTokens
+        if (changes.lastActivity) {
+          const updatedAt = new Date(changes.lastActivity).getTime()
+          if (updatedAt !== runtime.def.lastUpdated) {
+            runtime.def.lastUpdated = updatedAt
             defsChanged = true
           }
         }
-        // Sync React state so detail panel re-renders — throttle to max once per 3s
-        if (defsChanged) {
-          const now = Date.now()
-          if (!lastDefsUpdateRef.current || now - lastDefsUpdateRef.current > 3000) {
-            lastDefsUpdateRef.current = now
-            setAgentDefs(agentRuntimes.map(a => ({ ...a.def })))
-          }
+
+        const taskFromUpdate = changes.lastMessage?.preview ? String(changes.lastMessage.preview).trim() : ''
+        if (taskFromUpdate && taskFromUpdate !== runtime.def.task) {
+          runtime.def.task = taskFromUpdate
+          defsChanged = true
         }
-      } catch (err) {
+
+        if (changes.model !== undefined && changes.model !== runtime.def.model) {
+          runtime.def.model = changes.model ?? undefined
+          defsChanged = true
+        }
+
+        if (changes.tokenUsage !== undefined && changes.tokenUsage !== runtime.def.tokenUsage) {
+          runtime.def.tokenUsage = changes.tokenUsage ?? undefined
+          defsChanged = true
+        }
+
+        if (changes.sessionKey !== undefined && changes.sessionKey !== runtime.def.sessionKey) {
+          runtime.def.sessionKey = changes.sessionKey ?? undefined
+          defsChanged = true
+        }
+      }
+
+      if (defsChanged) {
+        const now = Date.now()
+        if (!lastDefsUpdateRef.current || now - lastDefsUpdateRef.current > 1000) {
+          lastDefsUpdateRef.current = now
+          setAgentDefs(agentRuntimes.map(a => ({ ...a.def })))
+        }
+      }
+      return true
+    }
+
+    async function bootstrapAgents() {
+      try {
+        const res = await fetch(`${backendBase}/api/agents`)
+        if (!res.ok) throw new Error(`bootstrap ${res.status}`)
+        const data = await res.json()
+        if (cancelled) return
+        const agents: any[] = data.agents ?? []
+        if (agents.length === 0) {
+          pollFailCountRef.current++
+          if (pollFailCountRef.current >= 6) {
+            setConnectionError(lang === 'he' ? 'לא נמצאו סוכנים — בדוק שה-backend poller פעיל' : 'No agents found — check the backend poller')
+          }
+          return
+        }
+        applyFullSnapshot(agents, data.version ?? 0)
+      } catch {
         pollFailCountRef.current++
         if (pollFailCountRef.current >= 3) {
-          setConnectionError(lang === 'he' ? 'לא ניתן להתחבר ל-Gateway — בדוק את הכתובת' : 'Cannot reach Gateway — check URL')
+          setConnectionError(lang === 'he' ? 'לא ניתן לטעון סטטוס סוכנים מה-backend' : 'Cannot load agent state from backend')
           setShowSettings(true)
         }
       }
     }
 
-    pollGateway()
-    // Poll every 5s — fast enough for status updates, avoids re-render churn
-    const timer = setInterval(pollGateway, 5000)
-    return () => clearInterval(timer)
-  }, [gatewayToken, gatewayUrl])
+    async function syncDelta() {
+      try {
+        const res = await fetch(`${backendBase}/api/agents/delta?sinceVersion=${agentsVersionRef.current}`)
+        if (!res.ok) throw new Error(`delta ${res.status}`)
+        const data = await res.json()
+        if (cancelled) return
+
+        if (data.hasGap) {
+          await bootstrapAgents()
+          return
+        }
+
+        agentsVersionRef.current = data.toVersion ?? agentsVersionRef.current
+        const updates: any[] = data.updates ?? []
+        if (updates.length === 0) return
+
+        const applied = applyDelta(updates)
+        if (applied === false) {
+          await bootstrapAgents()
+        }
+      } catch {
+        // Fall back to full snapshot on delta failures, but avoid surfacing noisy UI errors.
+        await bootstrapAgents()
+      }
+    }
+
+    bootstrapAgents()
+    const timer = setInterval(syncDelta, 5000)
+    return () => {
+      cancelled = true
+      clearInterval(timer)
+    }
+  }, [gatewayToken, isViewer, lang])
 
   // ── Animation loop (DPR-aware, double-buffered) ──
   useEffect(() => {

@@ -45,11 +45,16 @@ type BroadcastFn = (type: string, data: unknown) => void;
 
 // --- Constants ---
 const POLL_INTERVAL_MS = 5_000;
+const ACTIVE_WINDOW_MINUTES = parseInt(process.env.ACTIVE_WINDOW_MINUTES || '180');
 
 let pollTimer: ReturnType<typeof setTimeout> | null = null;
 let isRunning = false;
 let broadcastFn: BroadcastFn | null = null;
 const stateMap = new Map<string, AgentStatus>();
+let stateVersion = 0;
+let lastChangedAt = Date.now();
+const recentUpdates: Array<{ version: number; timestamp: number; updates: StatusUpdate[] }> = [];
+const MAX_RECENT_UPDATE_BATCHES = 100;
 
 // --- Status Derivation (v2 spec) ---
 
@@ -185,7 +190,7 @@ function computeDiffs(oldS: AgentStatus, newS: AgentStatus): Partial<AgentStatus
  */
 async function pollCycle(): Promise<void> {
   try {
-    const sessions = await fetchSessions(120);
+    const sessions = await fetchSessions(ACTIVE_WINDOW_MINUTES);
 
     // Group by agent, keep most recent
     const sessionByAgent = new Map<string, any>();
@@ -202,11 +207,13 @@ async function pollCycle(): Promise<void> {
 
     // Build statuses and diff
     const updates: StatusUpdate[] = [];
-    const allIds = new Set([...getAllAgentIds(), ...sessionByAgent.keys()]);
+    const knownAgentIds = getAllAgentIds();
+    const knownAgentIdSet = new Set(knownAgentIds);
+    const allIds = new Set([...knownAgentIds, ...sessionByAgent.keys()]);
 
     for (const agentId of allIds) {
       // Skip agents not in our v2 registry
-      if (!getAllAgentIds().includes(agentId) && !sessionByAgent.has(agentId)) continue;
+      if (!knownAgentIdSet.has(agentId) && !sessionByAgent.has(agentId)) continue;
 
       const session = sessionByAgent.get(agentId) ?? null;
       const newStatus = buildStatus(agentId, session);
@@ -260,6 +267,10 @@ async function pollCycle(): Promise<void> {
           });
         }
 
+        if (diff.lastMessage && newStatus.lastMessage?.preview) {
+          recordMessage(agentId);
+        }
+
         updates.push({
           agentId,
           changes: diff,
@@ -271,7 +282,17 @@ async function pollCycle(): Promise<void> {
     }
 
     if (updates.length > 0) {
-      broadcastFn?.('agent:update', updates);
+      stateVersion += 1;
+      lastChangedAt = Date.now();
+      recentUpdates.push({ version: stateVersion, timestamp: lastChangedAt, updates });
+      if (recentUpdates.length > MAX_RECENT_UPDATE_BATCHES) {
+        recentUpdates.splice(0, recentUpdates.length - MAX_RECENT_UPDATE_BATCHES);
+      }
+      broadcastFn?.('agent:update', {
+        version: stateVersion,
+        timestamp: lastChangedAt,
+        updates,
+      });
     }
   } catch (err) {
     console.error('[Poller] Poll failed:', (err as Error).message);
@@ -323,5 +344,39 @@ export function getPollerStats() {
     isRunning,
     intervalMs: POLL_INTERVAL_MS,
     trackedAgents: stateMap.size,
+    version: stateVersion,
+    lastChangedAt,
+  };
+}
+
+export function getStateSnapshot() {
+  return {
+    version: stateVersion,
+    timestamp: lastChangedAt,
+    agents: getFullState(),
+  };
+}
+
+export function getCompactAgents() {
+  return getFullState().map((agent) => ({
+    id: agent.id,
+    s: agent.state,
+    z: agent.zone,
+    a: agent.lastActivity,
+    m: agent.model,
+    t: agent.tokenUsage,
+    p: agent.lastMessage?.preview?.slice(0, 120) ?? null,
+  }));
+}
+
+export function getUpdatesSince(version: number) {
+  const batches = recentUpdates.filter((batch) => batch.version > version);
+  const updates = batches.flatMap((batch) => batch.updates);
+  return {
+    fromVersion: version,
+    toVersion: stateVersion,
+    timestamp: lastChangedAt,
+    hasGap: batches.length === 0 ? version !== stateVersion : batches[0].version > version + 1,
+    updates,
   };
 }
