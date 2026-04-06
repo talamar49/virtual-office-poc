@@ -26,13 +26,49 @@ jobs:
         run: npx tsc --noEmit
 
       - name: Build frontend
-        run: npx vite build
+        run: npm run build
 
       - name: Install server dependencies
         run: cd server && npm ci
 
       - name: TypeScript check (server)
         run: cd server && npx tsc --noEmit
+
+      - name: Build server
+        run: cd server && npm run build
+
+      - name: Generate build size report
+        run: |
+          mkdir -p reports
+          FRONT_DIST_BYTES=$(du -sb dist | cut -f1)
+          SERVER_DIST_BYTES=$(du -sb server/dist | cut -f1)
+          JS_TOTAL_BYTES=$(find dist/assets -type f -name '*.js' -printf '%s\n' | awk '{s+=$1} END {print s+0}')
+          CSS_TOTAL_BYTES=$(find dist/assets -type f -name '*.css' -printf '%s\n' | awk '{s+=$1} END {print s+0}')
+          ASSET_COUNT=$(find dist/assets -type f | wc -l)
+          LARGEST_ASSET=$(find dist/assets -type f -printf '%s %f\n' | sort -nr | head -1)
+          {
+            echo "frontend_dist_bytes=$FRONT_DIST_BYTES"
+            echo "server_dist_bytes=$SERVER_DIST_BYTES"
+            echo "js_total_bytes=$JS_TOTAL_BYTES"
+            echo "css_total_bytes=$CSS_TOTAL_BYTES"
+            echo "asset_count=$ASSET_COUNT"
+            echo "largest_asset=$LARGEST_ASSET"
+          } | tee reports/build-size.txt
+          {
+            echo "## Build size report"
+            echo "- Frontend dist: $FRONT_DIST_BYTES bytes"
+            echo "- Server dist: $SERVER_DIST_BYTES bytes"
+            echo "- Total JS in dist/assets: $JS_TOTAL_BYTES bytes"
+            echo "- Total CSS in dist/assets: $CSS_TOTAL_BYTES bytes"
+            echo "- Asset count: $ASSET_COUNT"
+            echo "- Largest asset: $LARGEST_ASSET"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload build size artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-size-report
+          path: reports/build-size.txt
 
   docker:
     name: Docker Build
